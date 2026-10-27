@@ -1,0 +1,4 @@
+* text=auto
+# cmd.exe needs CRLF; keep the launcher byte-for-byte in every checkout and ZIP download.
+*.cmd -text
+*.png binary

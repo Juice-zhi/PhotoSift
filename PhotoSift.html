@@ -1,0 +1,2234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="ps-token" content="">
+<title>PhotoSift 实况分拣</title>
+<style>
+:root{
+  --bg:#f4f4f1; --panel:#ffffff; --panel2:#ececE8; --ink:#1c1c1e; --muted:#6c6c72; --faint:#a3a3a8; --line:#e2e2dd;
+  --accent:#2563eb; --accent-ink:#fff;
+  --live:#f0a020; --live-ink:#3b2500; --video:#2f6fed; --photo:#9a9aa0;
+  --warn:#d9480f;
+  --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 10px rgba(0,0,0,.05);
+  --thumb:168px; --radius:10px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#111113; --panel:#1a1a1d; --panel2:#26262a; --ink:#ececf0; --muted:#9c9ca4; --faint:#66666e; --line:#2d2d32;
+    --accent:#5b8cff; --accent-ink:#fff;
+    --live:#ffb43a; --live-ink:#2a1a00; --video:#6b9bff; --photo:#8a8a92;
+    --warn:#ff8a50;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+[hidden]:not(.toast){display:none !important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI Variable","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit}
+svg{flex:none}
+
+/* ---- top bar ---- */
+.topbar{height:58px;flex:none;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:650;font-size:15px;white-space:nowrap}
+.brand small{color:var(--muted);font-weight:400;font-size:12.5px}
+.root{color:var(--muted);font-size:12.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kinds{display:flex;gap:6px;margin:0 auto}
+.kind{display:flex;align-items:center;gap:7px;height:34px;padding:0 13px;border-radius:17px;border:1px solid var(--line);background:var(--panel);cursor:pointer;white-space:nowrap}
+.kind:hover{background:var(--panel2)}
+.kind .n{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12.5px}
+.kind kbd{display:none}
+.kind.on{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.kind.on .n{color:inherit;opacity:.7}
+.kind[data-kind=live].on{background:var(--live);border-color:var(--live);color:var(--live-ink)}
+.kind[data-kind=video].on{background:var(--video);border-color:var(--video);color:#fff}
+.kind[data-kind=photo].on{background:var(--photo);border-color:var(--photo);color:#fff}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.btn{height:34px;padding:0 13px;border-radius:8px;border:1px solid var(--line);background:var(--panel);cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{background:var(--panel2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.icon{width:34px;padding:0;justify-content:center}
+.only-narrow{display:none}
+
+/* ---- layout ---- */
+.layout{flex:1;display:flex;min-height:0}
+.side{width:232px;flex:none;border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.side-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 6px;font-weight:600}
+.side-head button{border:0;background:none;color:var(--accent);cursor:pointer;font-size:12.5px;padding:2px 4px}
+.legend{display:flex;gap:12px;padding:0 14px 8px;font-size:11.5px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:4px}
+.days{overflow:auto;flex:1;padding:0 8px 20px}
+.month{position:sticky;top:0;z-index:1;background:var(--panel);font-size:12px;color:var(--muted);padding:10px 8px 4px;display:flex;justify-content:space-between;cursor:pointer;user-select:none}
+.month:hover{color:var(--ink)}
+.day{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;cursor:pointer;user-select:none}
+.day:hover{background:var(--panel2)}
+.day.on{background:var(--accent);color:var(--accent-ink)}
+.day .d{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.day .wk{color:var(--muted);font-size:12px;margin-left:5px}
+.day .c{display:flex;gap:7px;font-size:12px;font-variant-numeric:tabular-nums}
+.c span::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:3px;vertical-align:1px;background:currentColor}
+.c .l{color:var(--live)} .c .v{color:var(--video)} .c .p{color:var(--photo)}
+.day.on .wk,.day.on .c span{color:var(--accent-ink)}
+.side-empty{color:var(--faint);padding:20px 14px;font-size:13px}
+
+main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.toolbar{flex:none;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+.toolbar .grow{flex:1}
+.search{position:relative}
+.search svg{position:absolute;left:9px;top:9px;color:var(--faint)}
+.search input{padding-left:30px;width:190px}
+select,input[type=search]{height:32px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:13px;padding:0 8px}
+input[type=range]{width:90px;accent-color:var(--accent)}
+.sizer{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.viewsum{color:var(--muted);font-size:12.5px;white-space:nowrap}
+.progress{flex:none;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+.bar{height:4px;border-radius:2px;background:var(--panel2);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+
+#scroller{flex:1;overflow:auto;position:relative;padding-bottom:90px}
+.section{padding:0 16px 10px;content-visibility:auto;contain-intrinsic-size:auto 640px}
+.sec-head{position:sticky;top:0;z-index:2;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;padding:14px 0 9px;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(8px)}
+.sec-head h2{font-size:16px;margin:0;font-weight:650}
+.sec-head .wk{color:var(--muted)}
+.sum{display:flex;gap:10px;color:var(--muted);font-size:12.5px}
+.sum b{font-weight:600}
+.sum .l b{color:var(--live)} .sum .v b{color:var(--video)}
+.selgrp{margin-left:auto;border:0;background:none;color:var(--accent);cursor:pointer;font-size:12.5px;padding:2px 4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--thumb),1fr));gap:8px}
+
+.card{position:relative;cursor:pointer;border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow);overflow:hidden;user-select:none}
+.card::after{content:"";position:absolute;inset:0;border-radius:inherit;border:3px solid transparent;pointer-events:none}
+.card.sel::after{border-color:var(--accent)}
+.thumb{position:relative;aspect-ratio:1/1;background:var(--panel2);overflow:hidden}
+.thumb img,.thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.thumb img{opacity:0;transition:opacity .2s}
+.thumb img.ok{opacity:1}
+.thumb video{opacity:0;transition:opacity .15s}
+.thumb video.ok{opacity:1}
+.ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--faint);font-size:11px;text-align:center;padding:8px}
+.badge{position:absolute;left:6px;top:6px;z-index:1;display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:11px;font-size:11.5px;font-weight:650;line-height:1;font-variant-numeric:tabular-nums}
+.badge.live{background:var(--live);color:var(--live-ink)}
+.badge.video{background:rgba(10,20,45,.72);color:#fff}
+.flag{position:absolute;left:6px;bottom:6px;z-index:1;height:19px;padding:0 6px;border-radius:5px;font-size:11px;line-height:19px;background:rgba(0,0,0,.6);color:#fff}
+.flag.warn{background:var(--warn)}
+.check{position:absolute;right:6px;top:6px;z-index:1;width:24px;height:24px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.28);opacity:0;transition:opacity .1s;cursor:pointer;padding:0;display:grid;place-items:center;color:#fff}
+.check svg{opacity:0}
+.card:hover .check,body.selmode .check{opacity:1}
+.card.sel .check{background:var(--accent);border-color:var(--accent);opacity:1}
+.card.sel .check svg{opacity:1}
+.meta{display:flex;align-items:center;gap:6px;padding:6px 8px 7px;font-size:12px;border-top:3px solid transparent}
+.k-live .meta{border-top-color:var(--live)}
+.k-video .meta{border-top-color:var(--video)}
+.meta .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta .ext{color:var(--faint);font-size:11px}
+.meta .sz{color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
+
+/* ---- empty state ---- */
+.empty{max-width:880px;margin:36px auto;padding:0 20px;display:grid;grid-template-columns:1.1fr 1fr;gap:20px}
+.drop{border:2px dashed var(--line);border-radius:16px;background:var(--panel);padding:36px 28px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+.drop h1{font-size:19px;margin:6px 0 0}
+.drop p{margin:0;color:var(--muted)}
+.drop .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.tips{background:var(--panel);border-radius:16px;padding:20px 22px;font-size:13px;line-height:1.65;box-shadow:var(--shadow)}
+.tips h3{font-size:14px;margin:0 0 6px}
+.tips h3+ol,.tips h3+ul{margin-top:0}
+.tips ol,.tips ul{padding-left:20px;margin-bottom:14px}
+.tips li{margin:2px 0}
+.muted{color:var(--muted)}
+.noresult{padding:60px 20px;text-align:center;color:var(--muted)}
+
+/* ---- selection bar ---- */
+.selbar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:20;display:flex;align-items:center;gap:8px;padding:8px 8px 8px 16px;border-radius:14px;background:var(--ink);color:var(--panel);box-shadow:0 8px 30px rgba(0,0,0,.25);white-space:nowrap}
+.selbar[hidden]{display:none}
+.selbar .btn{background:transparent;border-color:color-mix(in srgb,var(--panel) 30%,transparent);color:var(--panel)}
+.selbar .btn:hover{background:color-mix(in srgb,var(--panel) 15%,transparent)}
+.selbar .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.selbar .txt{font-variant-numeric:tabular-nums;margin-right:6px}
+
+/* ---- viewer ---- */
+.viewer{position:fixed;inset:0;z-index:40;display:grid;grid-template-columns:1fr 330px;background:#0b0b0c;color:#eee}
+.viewer[hidden]{display:none}
+.v-main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.v-top{display:flex;align-items:center;gap:12px;height:52px;padding:0 14px}
+.v-tabs{display:flex;gap:4px;background:#222;border-radius:9px;padding:3px}
+.v-tabs:empty{display:none}
+.v-tabs button{border:0;background:none;color:#bbb;height:28px;padding:0 12px;border-radius:7px;cursor:pointer;display:flex;align-items:center;gap:5px}
+.v-tabs button.on{background:#444;color:#fff}
+.v-tabs button:disabled{opacity:.35;cursor:default}
+.v-pos{color:#888;font-size:12.5px;font-variant-numeric:tabular-nums}
+.v-x{margin-left:auto;width:36px;height:36px;border-radius:50%;border:0;background:#222;color:#ddd;cursor:pointer;font-size:16px}
+.v-stage{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;padding:0 60px 20px}
+.v-stage img,.v-stage video{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
+.v-stage .v-ph{position:absolute;filter:blur(6px);opacity:.5;max-width:60%;max-height:60%}
+.v-err{position:relative;max-width:440px;padding:16px 18px;border-radius:10px;background:#2a1d14;color:#ffcfae;line-height:1.6}
+.v-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;border:0;border-radius:10px;background:rgba(255,255,255,.08);color:#eee;font-size:28px;cursor:pointer}
+.v-nav:hover{background:rgba(255,255,255,.16)}
+.v-nav:disabled{opacity:.2;cursor:default}
+.v-nav.prev{left:8px}.v-nav.next{right:8px}
+.v-info{background:#161618;border-left:1px solid #26262a;padding:20px 20px 16px;overflow:auto;display:flex;flex-direction:column;gap:10px;font-size:13px}
+.v-kind{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;height:26px;padding:0 10px;border-radius:13px;font-weight:650;font-size:12.5px}
+.v-kind.k-live{background:var(--live);color:#2a1a00}
+.v-kind.k-video{background:#2f6fed;color:#fff}
+.v-kind.k-photo{background:#444;color:#eee}
+.v-info h3{margin:0;font-size:17px;word-break:break-all}
+.why{margin:0;color:#aaa;line-height:1.55}
+.v-info dl{display:grid;grid-template-columns:72px 1fr;gap:7px 10px;margin:4px 0}
+.v-info dt{color:#888}
+.v-info dd{margin:0;word-break:break-all}
+.v-info dd small{display:block;color:#777}
+.v-act{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.v-act .btn{background:#26262a;border-color:#333;color:#eee}
+.v-act .btn.primary{background:var(--accent);border-color:var(--accent)}
+.v-keys{margin-top:auto;color:#666;font-size:12px;line-height:1.7}
+.spinner{position:absolute;width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:#fff;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- dialogs / toast / drop overlay ---- */
+.modal{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:grid;place-items:center;padding:16px}
+.modal[hidden]{display:none}
+.dlg{width:min(480px,100%);background:var(--panel);border-radius:14px;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3);display:flex;flex-direction:column;gap:12px}
+.dlg h3{margin:0;font-size:17px}
+.dlg p{margin:0}
+.dlg .field{display:flex;flex-direction:column;gap:6px}
+.dlg .field>span{font-weight:600;font-size:13px}
+.dlg .radios{display:flex;gap:14px;flex-wrap:wrap}
+.dlg label{display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.note{font-size:12.5px;color:var(--muted);line-height:1.6}
+.dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:60;max-width:min(560px,90vw);padding:10px 16px;border-radius:10px;background:var(--ink);color:var(--panel);box-shadow:0 8px 30px rgba(0,0,0,.25);font-size:13px;line-height:1.5;transition:opacity .25s}
+.toast[hidden]{display:block;opacity:0;pointer-events:none}
+.dropov{position:fixed;inset:10px;z-index:70;border:3px dashed var(--accent);border-radius:18px;background:color-mix(in srgb,var(--accent) 12%,transparent);display:grid;place-items:center;font-size:20px;font-weight:600;color:var(--accent);pointer-events:none}
+.dropov[hidden]{display:none}
+
+/* ---- phone ---- */
+.devlist{display:flex;flex-direction:column;gap:6px}
+.devrow{display:flex;align-items:center;gap:12px;text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer}
+.devrow:hover{background:var(--panel2)}
+.devrow b{display:block}
+.devrow small{color:var(--muted)}
+.folders{display:flex;flex-direction:column;gap:10px;max-height:46vh;overflow:auto}
+.stor{display:flex;flex-wrap:wrap;gap:6px 16px}
+.stor>div{flex:1 0 100%;font-size:12.5px}
+.dlg ol{margin:0;padding-left:20px;line-height:1.75}
+.destrow{display:flex;gap:6px}
+.destrow input{flex:1;min-width:0;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:13px;padding:0 9px}
+#copyPtxt{white-space:pre-line}
+.card.imp .thumb img{opacity:.5}
+.tag-imp{position:absolute;right:6px;bottom:6px;z-index:1;height:19px;padding:0 6px;border-radius:5px;font-size:11px;line-height:19px;background:#1f8a4c;color:#fff}
+
+@media (max-width:900px){
+  .empty{grid-template-columns:1fr}
+  .brand small,.root{display:none}
+  .side{position:fixed;left:0;top:58px;bottom:0;z-index:30;transform:translateX(-100%);transition:transform .2s;box-shadow:0 0 40px rgba(0,0,0,.2)}
+  .side.open{transform:none}
+  .only-narrow{display:inline-flex}
+  .viewer{grid-template-columns:1fr;grid-template-rows:1fr auto}
+  .v-info{max-height:38vh;border-left:0;border-top:1px solid #26262a}
+  .v-stage{padding:0 8px 8px}
+}
+@media (max-width:640px){
+  .topbar{height:auto;flex-wrap:wrap;gap:8px;padding:8px 10px}
+  .brand span.t{display:none}
+  #btnRescan{margin-left:auto}
+  .kinds{order:9;flex:1 0 100%;margin:0}
+  .kind{flex:1;justify-content:center;padding:0 6px;gap:5px}
+  .side{top:0}
+  #btnOpen .t,#btnPhone .t{display:none}
+  .toolbar{padding:8px 10px}
+  .search input{width:130px}
+  .section{padding:0 10px 10px}
+  .selbar{left:10px;right:10px;transform:none;flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--live)"/><circle cx="13" cy="13" r="3" fill="var(--live-ink)"/><circle cx="13" cy="13" r="6" fill="none" stroke="var(--live-ink)" stroke-width="1.6"/><circle cx="13" cy="13" r="9" fill="none" stroke="var(--live-ink)" stroke-width="1.4" stroke-dasharray="1.6 2.2"/></svg>
+    <span class="t">PhotoSift</span><small>实况 · 视频分拣</small>
+  </div>
+  <button class="btn icon only-narrow" id="btnSide" title="日期">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>
+  </button>
+  <span class="root" id="rootName"></span>
+  <nav class="kinds" id="kinds">
+    <button class="kind on" data-kind="all" title="快捷键 1">全部 <span class="n">0</span></button>
+    <button class="kind" data-kind="live" title="快捷键 2"><i class="dot" style="background:var(--live)"></i>实况 <span class="n">0</span></button>
+    <button class="kind" data-kind="video" title="快捷键 3"><i class="dot" style="background:var(--video)"></i>视频 <span class="n">0</span></button>
+    <button class="kind" data-kind="photo" title="快捷键 4"><i class="dot" style="background:var(--photo)"></i>照片 <span class="n">0</span></button>
+  </nav>
+  <button class="btn icon" id="btnRescan" title="重新扫描" disabled>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M12.5 1.5v3h-3"/></svg>
+  </button>
+  <button class="btn" id="btnPhone" title="直接读取用数据线连接的手机">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="1.5" width="8" height="13" rx="1.8"/><path d="M7 12.2h2"/></svg>
+    <span class="t">连接手机</span>
+  </button>
+  <button class="btn primary" id="btnOpen">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H8L6.5 3.5h-4a1 1 0 0 0-1 1z"/></svg>
+    <span class="t">打开文件夹</span>
+  </button>
+</header>
+
+<div class="layout">
+  <aside class="side" id="side">
+    <div class="side-head">按天查看 <button id="btnAllDays" title="显示全部日期">全部日期</button></div>
+    <div class="legend"><span><i class="dot" style="background:var(--live)"></i>实况</span><span><i class="dot" style="background:var(--video)"></i>视频</span><span><i class="dot" style="background:var(--photo)"></i>照片</span></div>
+    <div class="days" id="dayList"><div class="side-empty">打开文件夹后，这里会按拍摄日期列出每一天。<br><br>点击某天只看那天；按住 Ctrl 可多选，Shift 选连续几天。</div></div>
+  </aside>
+
+  <main>
+    <div class="toolbar" id="toolbar">
+      <label class="search"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg><input type="search" id="q" placeholder="搜文件名 / 文件夹  ( / )"></label>
+      <select id="fDur" title="视频时长">
+        <option value="all">视频时长：不限</option>
+        <option value="lt15">短于 15 秒</option>
+        <option value="m1">15 秒 – 1 分钟</option>
+        <option value="m5">1 – 5 分钟</option>
+        <option value="gt5">5 分钟以上</option>
+      </select>
+      <select id="fSpecial" title="更多筛选">
+        <option value="all">更多筛选：无</option>
+        <option value="orphan">只看缺照片的实况视频</option>
+        <option value="embedded">只看内嵌视频的实况（安卓）</option>
+        <option value="screen">只看截屏和录屏</option>
+        <option value="noscreen">隐藏截屏和录屏</option>
+        <option value="nodate">没有拍摄时间的（用的是文件时间）</option>
+        <option value="new" data-dev hidden>只看还没导入电脑的</option>
+        <option value="imported" data-dev hidden>只看已经导入过的</option>
+      </select>
+      <select id="fGroup" title="分组">
+        <option value="day">按天分组</option>
+        <option value="month">按月分组</option>
+        <option value="none">不分组</option>
+      </select>
+      <select id="fSort" title="排序">
+        <option value="time-desc">时间：新 → 旧</option>
+        <option value="time-asc">时间：旧 → 新</option>
+        <option value="size">文件大小</option>
+        <option value="dur">视频时长</option>
+        <option value="name">文件名</option>
+      </select>
+      <span class="sizer" title="缩略图大小"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg><input type="range" id="fSize" min="110" max="300" step="10" value="168"></span>
+      <span class="grow"></span>
+      <span class="viewsum" id="viewSum"></span>
+      <button class="btn" id="btnSelAll" title="选择当前筛选出的全部 (Ctrl+A)">全选</button>
+      <button class="btn" id="btnCsv" title="把当前列表导出为 Excel 可打开的 CSV">导出清单</button>
+    </div>
+    <div class="progress" id="progress" hidden><span id="ptxt"></span><div class="bar"><i id="pbar"></i></div></div>
+    <div id="scroller"></div>
+  </main>
+</div>
+
+<div class="selbar" id="selbar" hidden>
+  <span class="txt" id="selTxt"></span>
+  <button class="btn primary" id="btnCopy">复制到文件夹…</button>
+  <button class="btn" id="btnCsvSel">导出清单</button>
+  <button class="btn" id="btnClearSel">取消选择</button>
+</div>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="v-main">
+    <div class="v-top"><div class="v-tabs" id="vTabs"></div><span class="v-pos" id="vPos"></span><button class="v-x" id="vClose" title="关闭 (Esc)">✕</button></div>
+    <div class="v-stage" id="vStage"></div>
+    <button class="v-nav prev" id="vPrev" title="上一个 (←)">‹</button>
+    <button class="v-nav next" id="vNext" title="下一个 (→)">›</button>
+  </div>
+  <aside class="v-info" id="vInfo"></aside>
+</div>
+
+<div class="modal" id="devDlg" hidden>
+  <div class="dlg">
+    <h3>连接手机</h3>
+    <div id="devBody"></div>
+    <div class="dlg-actions"><button class="btn" id="devRefresh">刷新</button><span style="flex:1"></span><button class="btn" id="devClose">关闭</button><button class="btn primary" id="devGo" hidden>开始读取</button></div>
+  </div>
+</div>
+
+<div class="modal" id="copyDlg" hidden>
+  <div class="dlg">
+    <h3 id="copyTitle">复制到文件夹</h3>
+    <p class="muted" id="copySum"></p>
+    <div class="field" id="destField" hidden><span>导入到</span>
+      <div class="destrow"><input id="copyDest" spellcheck="false" placeholder="例如 D:\照片\iPhone"><button class="btn" id="copyBrowse">浏览…</button></div>
+    </div>
+    <div class="field"><span>子文件夹</span>
+      <select id="copyLayout">
+        <option value="day">按拍摄日期（如 2026-10-26）</option>
+        <option value="kind">按类型（实况 / 视频 / 照片）</option>
+        <option value="day-kind">日期 \ 类型</option>
+        <option value="none">不建子文件夹</option>
+      </select>
+    </div>
+    <div class="field"><span>实况照片复制哪部分</span>
+      <div class="radios">
+        <label><input type="radio" name="copyLive" value="both" checked>照片 + 视频</label>
+        <label><input type="radio" name="copyLive" value="photo">只要照片</label>
+        <label><input type="radio" name="copyLive" value="video">只要视频 (MOV)</label>
+      </div>
+    </div>
+    <p class="note" id="copyNote"></p>
+    <div id="copyProg" hidden><div id="copyPtxt" class="note"></div><div class="bar"><i id="copyPbar"></i></div></div>
+    <div class="dlg-actions"><button class="btn" id="copyOpen" hidden>打开文件夹</button><span style="flex:1"></span><button class="btn" id="copyCancel">取消</button><button class="btn primary" id="copyGo">选择目标文件夹并开始</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="dropov" id="dropov" hidden>松开鼠标，开始扫描</div>
+<input type="file" id="dirInput" webkitdirectory multiple hidden>
+
+<script>
+(() => {
+'use strict';
+
+// ============================================================================
+// constants & state
+// ============================================================================
+const $ = (s, el = document) => el.querySelector(s);
+const VIDEO_EXT = new Set(['mov', 'mp4', 'm4v', '3gp', '3g2', 'avi', 'mkv', 'webm', 'mts', 'm2ts']);
+const IMAGE_EXT = new Set(['heic', 'heif', 'hif', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'dng']);
+const HEIC_EXT = new Set(['heic', 'heif', 'hif']);
+const NATIVE_IMG = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp']);
+const SKIP_DIR = /^(\$recycle\.bin|system volume information|\.|@eadir$)/i;
+const LIVE_MAX_DUR = 6.5;       // iPhone Live Photo videos are ~1.5–3 s
+const THUMB_W = 480;
+const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+const DUR = { lt15: [0, 15], m1: [15, 60], m5: [60, 300], gt5: [300, Infinity] };
+const HEIC_LIB = 'https://cdn.jsdelivr.net/npm/heic-to@1.6.5/dist/iife/heic-to.js';
+
+const ICON = {
+  live: '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.3" fill="currentColor"/><circle cx="8" cy="8" r="4.7" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.3 1.7"/></svg>',
+  play: '<svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true"><path d="M0 0l9 5-9 5z" fill="currentColor"/></svg>',
+  check: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2l2.4 2.4 4.6-5"/></svg>',
+  photo: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 9"/></svg>',
+  video: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="5" width="14" height="14" rx="2"/><path d="M16.5 10l5-3v10l-5-3z"/></svg>',
+  phone: '<svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4" y="1.5" width="8" height="13" rx="1.8"/><path d="M7 12.2h2"/></svg>',
+};
+
+const state = {
+  rootName: '', rootHandle: null, scanToken: 0,
+  source: null,          // set when reading a phone through the helper: { dev, name, key }
+  lastDevice: null, recs: [], phase: 'idle', imported: null,
+  items: [], byId: new Map(), stats: null,
+  filter: { kind: 'all', days: new Set(), q: '', dur: 'all', special: 'all' },
+  group: 'day', sort: 'time-desc',
+  selected: new Set(), lastClicked: null, lastDay: null,
+  view: [], visibleDays: [],
+};
+
+// ============================================================================
+// small helpers
+// ============================================================================
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = n => String(n).padStart(2, '0');
+function fmtSize(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i >= 2 && n < 100 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+}
+function fmtDur(s) {
+  if (s == null || !isFinite(s)) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
+}
+const fmtDurLong = s => s < 10 ? s.toFixed(1) + ' 秒' : fmtDur(s);
+// Timestamps are kept as "naive local" ms: the wall-clock time at capture encoded as if UTC.
+const naiveFromUtc = ms => ms - new Date(ms).getTimezoneOffset() * 60000;
+function dayKeyOf(ts) { const d = new Date(ts); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; }
+function fmtTime(ts) { const d = new Date(ts); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; }
+function dayInfo(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const wk = WEEK[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  const today = dayKeyOf(naiveFromUtc(Date.now()));
+  const yest = dayKeyOf(naiveFromUtc(Date.now()) - 86400000);
+  const rel = key === today ? '今天' : key === yest ? '昨天' : '';
+  return { title: `${y}年${m}月${d}日`, short: `${m}月${d}日`, wk: rel ? `${rel} · ${wk}` : wk, rel, wkOnly: wk };
+}
+function parseDateStr(s) {
+  if (!s || typeof s !== 'string') return null;
+  const m = /(\d{4})[-:](\d{2})[-:](\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?/.exec(s);
+  if (!m) return null;
+  const y = +m[1];
+  if (y < 1971 || y > 2100) return null;
+  const ts = Date.UTC(y, +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  if (isNaN(ts)) return null;
+  return m[7] === 'Z' ? naiveFromUtc(ts) : ts;   // explicit UTC → viewer's local time; otherwise keep wall clock
+}
+let toastTimer;
+function toast(msg, ms = 4200) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+const prefs = {
+  get(k, d) { try { const v = localStorage.getItem('photosift.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('photosift.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+};
+const idb = {
+  _db: null,
+  open() {
+    return this._db ||= new Promise((res, rej) => {
+      const r = indexedDB.open('photosift', 2);
+      r.onupgradeneeded = () => { for (const s of ['kv', 'meta']) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  },
+  async get(k) {
+    try { const db = await this.open(); return await new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+    catch { return undefined; }
+  },
+  async set(k, v) {
+    try { const db = await this.open(); await new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+    catch { /* ignore */ }
+  },
+};
+async function pool(arr, n, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, arr.length) }, async () => {
+    while (i < arr.length) { const k = i++; try { await fn(arr[k], k); } catch (e) { console.warn(e); } }
+  }));
+}
+// Parsed metadata of phone files, so a second visit doesn't re-read every file over USB.
+const metaCache = {
+  async load(prefix) {
+    try {
+      const db = await idb.open();
+      return await new Promise((res, rej) => {
+        const st = db.transaction('meta').objectStore('meta'), range = IDBKeyRange.bound(prefix, prefix + '￿');
+        const kq = st.getAllKeys(range), vq = st.getAll(range);
+        vq.onsuccess = () => res(new Map(kq.result.map((k, i) => [k, vq.result[i]])));
+        vq.onerror = () => rej(vq.error);
+      });
+    } catch { return new Map(); }
+  },
+  async save(rows) {
+    if (!rows.length) return;
+    try {
+      const db = await idb.open();
+      await new Promise((res, rej) => { const t = db.transaction('meta', 'readwrite'), st = t.objectStore('meta'); for (const [k, v] of rows) st.put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); });
+    } catch { /* cache is optional */ }
+  },
+};
+
+// ============================================================================
+// local helper (PhotoSift-helper\PhotoSift.exe): reads the phone over USB
+// ============================================================================
+const TOKEN = document.querySelector('meta[name="ps-token"]')?.content || '';
+const HELPER = !!TOKEN && location.protocol.startsWith('http');
+const enc = encodeURIComponent;
+const MIME = { mov: 'video/quicktime', mp4: 'video/mp4', m4v: 'video/mp4', '3gp': 'video/3gpp', heic: 'image/heic', heif: 'image/heif', hif: 'image/heif', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp' };
+let helperInfo = null;
+async function api(path, body, { raw = false } = {}) {
+  const r = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'X-PS-Token': TOKEN, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) {
+    let data = {};
+    try { data = await r.json(); } catch { /* not JSON */ }
+    throw Object.assign(new Error(data.error || 'HTTP ' + r.status), { code: data.error, data, status: r.status });
+  }
+  return raw ? r : r.json();
+}
+function deviceErr(e) {
+  const c = e?.code || e?.message || e;
+  if (c === 'gone') return '手机连接断开了。请插好数据线、解锁手机后再试。';
+  if (c === 'denied') return '手机拒绝了访问。请解锁手机，并在手机上点「信任」/「允许」。';
+  if (c === 'Failed to fetch') return '连不上 PhotoSift 助手，它的窗口可能被关掉了。请重新双击「启动 PhotoSift.cmd」。';
+  return String(c);
+}
+// A file on the phone that looks enough like a Blob for the parsers: size, slice(), arrayBuffer().
+class DevFile {
+  constructor(dev, id, name, size, date, off = 0, full = size, type) {
+    Object.assign(this, { dev, id, name, size, lastModified: date, off, full });
+    this.type = type || MIME[name.slice(name.lastIndexOf('.') + 1).toLowerCase()] || '';
+  }
+  slice(s = 0, e = this.size, type) {
+    s = Math.max(0, Math.min(s, this.size)); e = Math.max(s, Math.min(e, this.size));
+    return new DevFile(this.dev, this.id, this.name, e - s, this.lastModified, this.off + s, this.full, type || this.type);
+  }
+  get base() { return `/api/file?dev=${enc(this.dev)}&id=${enc(this.id)}&t=${TOKEN}&n=${enc(this.name)}`; }
+  get url() { return this.off || this.size !== this.full ? `${this.base}&off=${this.off}&len=${this.size}` : this.base; }
+  get thumbUrl() { return `/api/thumb?dev=${enc(this.dev)}&id=${enc(this.id)}&t=${TOKEN}`; }
+  async arrayBuffer() {
+    if (!this.size) return new ArrayBuffer(0);
+    const r = await fetch(this.base, { headers: { Range: `bytes=${this.off}-${this.off + this.size - 1}` } });
+    if (!r.ok) throw new Error(r.status === 503 ? 'gone' : 'HTTP ' + r.status);
+    return r.arrayBuffer();
+  }
+  async blob() { return new Blob([await this.arrayBuffer()], { type: this.type }); }
+}
+const isDev = f => f instanceof DevFile;
+// Something a <video>/<img> can load: phone files stream from the helper, local files become blob: URLs.
+function srcOf(f) {
+  if (isDev(f)) return { url: f.url, revoke() {} };
+  const url = URL.createObjectURL(f);
+  return { url, revoke: () => URL.revokeObjectURL(url) };
+}
+const asBlob = f => isDev(f) ? f.blob() : f;
+
+// ============================================================================
+// binary parsing: ISO-BMFF (MOV/MP4/HEIC), JPEG, PNG, TIFF/EXIF
+// ============================================================================
+const utf8 = new TextDecoder('utf-8');
+const dvOf = b => new DataView(b.buffer, b.byteOffset, b.byteLength);
+function ascii(b, s, e) { let r = ''; e = Math.min(e, b.length); for (let i = s; i < e; i++) r += String.fromCharCode(b[i]); return r; }
+function indexOfAscii(b, str, from = 0) {
+  const n = str.length, c0 = str.charCodeAt(0);
+  outer: for (let i = from; i <= b.length - n; i++) {
+    if (b[i] !== c0) continue;
+    for (let j = 1; j < n; j++) if (b[i + j] !== str.charCodeAt(j)) continue outer;
+    return i;
+  }
+  return -1;
+}
+async function readBytes(file, start, len) {
+  const end = Math.min(file.size, start + len);
+  if (start >= end) return new Uint8Array(0);
+  return new Uint8Array(await file.slice(start, end).arrayBuffer());
+}
+function* boxes(b, start, end) {
+  const dv = dvOf(b);
+  let p = start;
+  end = Math.min(end, b.length);
+  while (p + 8 <= end) {
+    let size = dv.getUint32(p), hdr = 8;
+    const type = ascii(b, p + 4, p + 8);
+    if (size === 1) { if (p + 16 > end) return; size = Number(dv.getBigUint64(p + 8)); hdr = 16; }
+    else if (size === 0) size = end - p;
+    if (size < hdr) return;
+    yield { type, start: p, body: p + hdr, end: Math.min(p + size, end) };
+    p += size;
+  }
+}
+// Walk top-level boxes by reading only their headers (moov is often at the end of a MOV).
+async function topBoxes(file, want) {
+  const res = {};
+  let p = 0;
+  for (let guard = 0; guard < 200 && p + 8 <= file.size; guard++) {
+    const h = await readBytes(file, p, 16);
+    const dv = dvOf(h);
+    let size = dv.getUint32(0), hdr = 8;
+    const type = ascii(h, 4, 8);
+    if (!/^[\x20-\x7e\xa9]{4}$/.test(type)) break;
+    if (size === 1) { size = Number(dv.getBigUint64(8)); hdr = 16; }
+    else if (size === 0) size = file.size - p;
+    if (size < hdr) break;
+    if (!(type in res)) res[type] = { offset: p, size, hdr };
+    if (want.every(t => t in res)) break;
+    p += size;
+  }
+  return res;
+}
+
+async function parseMovie(file) {
+  const out = { keys: {} };
+  const mv = (await topBoxes(file, ['moov'])).moov;
+  if (!mv) return out;
+  const b = await readBytes(file, mv.offset, Math.min(mv.size, 48 << 20));
+  const dv = dvOf(b);
+
+  const parseMeta = bx => {
+    let s = bx.body;
+    if (s + 4 <= bx.end && dv.getUint32(s) === 0) s += 4;      // MP4-style full box
+    const kids = [...boxes(b, s, bx.end)];
+    let keys = null;
+    for (const c of kids) if (c.type === 'keys') {
+      keys = [];
+      const n = dv.getUint32(c.body + 4);
+      let p = c.body + 8;
+      for (let i = 0; i < n && p + 8 <= c.end; i++) {
+        const sz = dv.getUint32(p);
+        if (sz < 8) break;
+        keys.push(utf8.decode(b.subarray(p + 8, Math.min(p + sz, c.end))));
+        p += sz;
+      }
+    }
+    for (const c of kids) if (c.type === 'ilst') {
+      for (const it of boxes(b, c.body, c.end)) {
+        const idx = dv.getUint32(it.start + 4);
+        const name = keys && idx >= 1 && idx <= keys.length ? keys[idx - 1] : it.type;
+        for (const d of boxes(b, it.body, it.end)) {
+          if (d.type !== 'data') continue;
+          const dt = dv.getUint32(d.body) & 0xffffff;
+          const vb = b.subarray(d.body + 8, d.end);
+          let val;
+          if (dt === 21 || dt === 22) { val = 0; for (const x of vb) val = val * 256 + x; }
+          else if (dt === 23 && vb.length >= 4) val = dvOf(vb).getFloat32(0);
+          else val = utf8.decode(vb);
+          out.keys[name] = val;
+          break;
+        }
+      }
+    }
+  };
+  const parseTrak = (s, e) => {
+    const tr = {};
+    const walk = (s2, e2) => {
+      for (const bx of boxes(b, s2, e2)) {
+        if (bx.type === 'tkhd') {
+          const v = b[bx.body], mo = bx.body + (v === 1 ? 52 : 40);
+          if (mo + 44 <= bx.end) {
+            const ma = dv.getInt32(mo), mb = dv.getInt32(mo + 4);
+            tr.w = Math.round(dv.getUint32(mo + 36) / 65536);
+            tr.h = Math.round(dv.getUint32(mo + 40) / 65536);
+            if (ma === 0 && mb !== 0) [tr.w, tr.h] = [tr.h, tr.w];   // rotated 90°/270°
+          }
+        } else if (bx.type === 'mdia') walk(bx.body, bx.end);
+        else if (bx.type === 'hdlr') tr.handler = ascii(b, bx.body + 8, bx.body + 12);
+      }
+    };
+    walk(s, e);
+    return tr;
+  };
+  const walk = (s, e, inUdta) => {
+    for (const bx of boxes(b, s, e)) {
+      const t = bx.type;
+      if (t === 'mvhd') {
+        const v = b[bx.body];
+        let ct, ts, du;
+        if (v === 1) { ct = Number(dv.getBigUint64(bx.body + 4)); ts = dv.getUint32(bx.body + 20); du = Number(dv.getBigUint64(bx.body + 24)); }
+        else { ct = dv.getUint32(bx.body + 4); ts = dv.getUint32(bx.body + 12); du = dv.getUint32(bx.body + 16); }
+        if (ts) out.duration = du / ts;
+        const ms = (ct - 2082844800) * 1000;               // seconds since 1904 → unix ms
+        if (ms > Date.UTC(1971, 0, 1)) out.mvhdUtc = ms;
+      } else if (t === 'trak') {
+        const tr = parseTrak(bx.body, bx.end);
+        if (tr.handler === 'vide' && tr.w && !out.width) { out.width = tr.w; out.height = tr.h; }
+      } else if (t === 'meta') parseMeta(bx);
+      else if (t === 'udta') walk(bx.body, bx.end, true);
+      else if (t === '©day' && inUdta && !out.udtaDay) {
+        const n = dv.getUint16(bx.body);
+        out.udtaDay = utf8.decode(b.subarray(bx.body + 4, Math.min(bx.end, bx.body + 4 + n)));
+      }
+    }
+  };
+  walk(mv.hdr, b.length, false);
+
+  const k = out.keys;
+  out.contentId = k['com.apple.quicktime.content.identifier'] || null;
+  out.qtDate = k['com.apple.quicktime.creationdate'] || null;
+  out.make = k['com.apple.quicktime.make'] || k['©mak'] || null;
+  out.model = k['com.apple.quicktime.model'] || k['©mod'] || null;
+  out.liveKey = Object.keys(k).some(n => n.includes('live-photo')) || indexOfAscii(b, 'com.apple.quicktime.live-photo') >= 0;
+  out.stillTime = indexOfAscii(b, 'com.apple.quicktime.still-image-time') >= 0;
+  return out;
+}
+
+function parseTiff(b, t, end = b.length) {
+  const out = {};
+  if (t + 8 > end) return out;
+  const le = b[t] === 0x49;
+  if (!le && b[t] !== 0x4d) return out;
+  const dv = dvOf(b);
+  const u16 = o => dv.getUint16(t + o, le), u32 = o => dv.getUint32(t + o, le);
+  if (u16(2) !== 42) return out;
+  const SZ = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+  const ifd = off => {
+    const m = new Map();
+    if (!off || t + off + 2 > end) return m;
+    const n = u16(off);
+    for (let i = 0; i < n; i++) {
+      const e = off + 2 + i * 12;
+      if (t + e + 12 > end) break;
+      const tag = u16(e), type = u16(e + 2), cnt = u32(e + 4);
+      const bytes = (SZ[type] || 1) * cnt;
+      m.set(tag, { type, cnt, vo: bytes <= 4 ? e + 8 : u32(e + 8) });
+    }
+    return m;
+  };
+  const str = en => {
+    if (!en || en.type !== 2) return undefined;
+    let s = '';
+    for (let i = 0; i < en.cnt && t + en.vo + i < end; i++) { const c = b[t + en.vo + i]; if (!c) break; s += String.fromCharCode(c); }
+    return s.trim() || undefined;
+  };
+  const num = en => !en ? undefined : en.type === 3 ? u16(en.vo) : en.type === 4 ? u32(en.vo) : undefined;
+  const i0 = ifd(u32(4));
+  out.make = str(i0.get(0x10f));
+  out.model = str(i0.get(0x110));
+  out.software = str(i0.get(0x131));
+  const orient = num(i0.get(0x112));
+  const dt0 = str(i0.get(0x132));
+  const ex = ifd(num(i0.get(0x8769)));
+  out.dto = str(ex.get(0x9003)) || str(ex.get(0x9004)) || dt0;
+  out.w = num(ex.get(0xa002)); out.h = num(ex.get(0xa003));
+  if (orient >= 5 && out.w) [out.w, out.h] = [out.h, out.w];
+  const mn = ex.get(0x927c);
+  if (mn) { try { out.contentId = appleContentId(b, t + mn.vo, Math.min(end, t + mn.vo + mn.cnt)); } catch { /* not Apple */ } }
+  return out;
+}
+// Apple MakerNote: "Apple iOS\0" + version(2) + "MM" + IFD; tag 0x11 = ContentIdentifier (shared with the Live video).
+function appleContentId(b, s, end) {
+  if (ascii(b, s, s + 9) !== 'Apple iOS') return undefined;
+  const le = b[s + 12] === 0x49;
+  const dv = dvOf(b);
+  const n = dv.getUint16(s + 14, le);
+  for (let i = 0; i < n; i++) {
+    const e = s + 16 + i * 12;
+    if (e + 12 > end) break;
+    if (dv.getUint16(e, le) !== 0x11) continue;
+    const cnt = dv.getUint32(e + 4, le);
+    const vo = cnt <= 4 ? e + 8 : s + dv.getUint32(e + 8, le);
+    return ascii(b, vo, vo + cnt).replace(/\0.*$/, '') || undefined;
+  }
+  return undefined;
+}
+function motionInfo(xmp) {
+  if (!xmp || !/(MotionPhoto|MicroVideo)\s*(=\s*["']\s*1|>\s*1)|Semantic\s*=\s*["']MotionPhoto/i.test(xmp)) return null;
+  const off = /MicroVideoOffset\s*(?:=\s*["']|>)\s*(\d+)/i.exec(xmp);
+  if (off) return { tail: +off[1] };
+  for (const m of xmp.matchAll(/<Container:Item\b[^>]*>/gi)) {
+    if (!/Semantic\s*=\s*["']MotionPhoto/i.test(m[0])) continue;
+    const len = /Item:Length\s*=\s*["'](\d+)/i.exec(m[0]);
+    if (len) return { tail: +len[1] };
+  }
+  return { tail: 0 };
+}
+const xmpDate = x => x && (/(?:photoshop:DateCreated|xmp:CreateDate|exif:DateTimeOriginal)\s*(?:=\s*["']|>)\s*([^"'<]+)/.exec(x) || [])[1];
+
+async function parseJpeg(file) {
+  const b = await readBytes(file, 0, 256 * 1024);
+  let out = {};
+  if (b[0] !== 0xff || b[1] !== 0xd8) return out;
+  let xmp = '', p = 2;
+  while (p + 4 <= b.length) {
+    if (b[p] !== 0xff) break;
+    const mk = b[p + 1];
+    if (mk === 0xff) { p++; continue; }
+    if (mk === 0xd8 || mk === 0x01 || (mk >= 0xd0 && mk <= 0xd7)) { p += 2; continue; }
+    if (mk === 0xda || mk === 0xd9) break;
+    const len = (b[p + 2] << 8) | b[p + 3];
+    const s = p + 4, e = Math.min(b.length, p + 2 + len);
+    if (mk === 0xe1) {
+      if (ascii(b, s, s + 6) === 'Exif\0\0' && !out.exif) out = { ...parseTiff(b, s + 6, e), exif: true };
+      else if (ascii(b, s, s + 28) === 'http://ns.adobe.com/xap/1.0/') xmp += utf8.decode(b.subarray(s, e));
+    } else if (mk >= 0xc0 && mk <= 0xcf && mk !== 0xc4 && mk !== 0xc8 && mk !== 0xcc && !out.sofW) {
+      out.sofH = (b[p + 5] << 8) | b[p + 6]; out.sofW = (b[p + 7] << 8) | b[p + 8];
+    }
+    p += 2 + len;
+  }
+  if (!out.w && out.sofW) { out.w = out.sofW; out.h = out.sofH; }
+  out.xmpDate = xmpDate(xmp);
+  out.motion = motionInfo(xmp);
+  return out;
+}
+
+async function parseHeif(file) {
+  const out = {};
+  const m = (await topBoxes(file, ['meta'])).meta;
+  if (!m) return out;
+  const b = await readBytes(file, m.offset, Math.min(m.size, 8 << 20));
+  const dv = dvOf(b);
+  const kids = {};
+  for (const bx of boxes(b, m.hdr + 4, b.length)) kids[bx.type] ||= bx;
+  const items = new Map();
+  if (kids.iinf) {
+    const v = b[kids.iinf.body];
+    for (const e of boxes(b, kids.iinf.body + (v === 0 ? 6 : 8), kids.iinf.end)) {
+      if (e.type !== 'infe' || b[e.body] < 2) continue;
+      const ev = b[e.body];
+      let q = e.body + 4;
+      const id = ev === 2 ? dv.getUint16(q) : dv.getUint32(q);
+      q += (ev === 2 ? 2 : 4) + 2;
+      const type = ascii(b, q, q + 4); q += 4;
+      while (q < e.end && b[q]) q++;                        // item_name
+      q++;
+      let mime = '';
+      if (type === 'mime') { const z = b.indexOf(0, q); mime = ascii(b, q, z < 0 ? e.end : z); }
+      items.set(id, { type, mime });
+    }
+  }
+  const locs = new Map();
+  if (kids.iloc) {
+    const v = b[kids.iloc.body];
+    let p = kids.iloc.body + 4;
+    const os = b[p] >> 4, ls = b[p] & 15, bs = b[p + 1] >> 4, is = (v === 1 || v === 2) ? b[p + 1] & 15 : 0;
+    p += 2;
+    const rd = n => { const r = n === 4 ? dv.getUint32(p) : n === 8 ? Number(dv.getBigUint64(p)) : n === 2 ? dv.getUint16(p) : 0; p += n; return r; };
+    const cnt = v < 2 ? rd(2) : rd(4);
+    for (let i = 0; i < cnt; i++) {
+      const id = v < 2 ? rd(2) : rd(4);
+      const cm = (v === 1 || v === 2) ? rd(2) & 15 : 0;
+      rd(2);
+      const base = rd(bs);
+      const ec = rd(2);
+      const ext = [];
+      for (let j = 0; j < ec; j++) { if (is) rd(is); const off = rd(os), len = rd(ls); ext.push([off, len]); }
+      locs.set(id, { cm, base, ext });
+    }
+  }
+  const readItem = async id => {
+    const L = locs.get(id);
+    if (!L) return null;
+    const parts = [];
+    for (const [off, len] of L.ext) {
+      if (L.cm === 1 && kids.idat) parts.push(b.subarray(kids.idat.body + L.base + off, kids.idat.body + L.base + off + len));
+      else if (L.cm === 0) parts.push(await readBytes(file, L.base + off, Math.min(len || 1 << 20, 4 << 20)));
+    }
+    const all = new Uint8Array(parts.reduce((s, x) => s + x.length, 0));
+    let o = 0; for (const x of parts) { all.set(x, o); o += x.length; }
+    return all;
+  };
+  let xmp = '';
+  for (const [id, it] of items) {
+    if (it.type === 'Exif') {
+      const d = await readItem(id);
+      if (!d || d.length < 8) continue;
+      let t = 4 + dvOf(d).getUint32(0);
+      if (!(d[t] === 0x4d && d[t + 1] === 0x4d) && !(d[t] === 0x49 && d[t + 1] === 0x49)) {
+        t = -1;
+        for (let i = 0; i < Math.min(64, d.length - 4); i++) if ((d[i] === 0x4d && d[i + 1] === 0x4d && d[i + 3] === 42) || (d[i] === 0x49 && d[i + 1] === 0x49 && d[i + 2] === 42)) { t = i; break; }
+      }
+      if (t >= 0) Object.assign(out, parseTiff(d, t));
+    } else if (it.type === 'mime' && /rdf\+xml|xmp/i.test(it.mime)) {
+      const d = await readItem(id);
+      if (d) xmp += utf8.decode(d);
+    }
+  }
+  out.xmpDate = xmpDate(xmp);
+  out.motion = motionInfo(xmp);
+  return out;
+}
+
+async function parsePng(file) {
+  const b = await readBytes(file, 0, 512 * 1024);
+  const out = {};
+  if (ascii(b, 1, 4) !== 'PNG') return out;
+  const dv = dvOf(b);
+  let p = 8, xmp = '';
+  while (p + 8 <= b.length) {
+    const len = dv.getUint32(p), type = ascii(b, p + 4, p + 8), s = p + 8, e = Math.min(b.length, s + len);
+    if (type === 'IHDR') { out.w = dv.getUint32(s); out.h = dv.getUint32(s + 4); }
+    else if (type === 'eXIf') { const ex = parseTiff(b, s, e); out.dto = ex.dto; out.make = ex.make; out.model = ex.model; }
+    else if (type === 'iTXt' || type === 'tEXt') { const txt = utf8.decode(b.subarray(s, e)); if (/xmp|XML:com\.adobe/i.test(txt.slice(0, 40))) xmp += txt; }
+    else if (type === 'IDAT' || type === 'IEND') break;
+    p = s + len + 4;
+  }
+  out.xmpDate = xmpDate(xmp);
+  return out;
+}
+
+function parseImage(file, ext) {
+  if (ext === 'jpg' || ext === 'jpeg') return parseJpeg(file);
+  if (HEIC_EXT.has(ext) || ext === 'avif') return parseHeif(file);
+  if (ext === 'png') return parsePng(file);
+  if (ext === 'tif' || ext === 'tiff' || ext === 'dng') return readBytes(file, 0, 512 * 1024).then(b => parseTiff(b, 0));
+  return Promise.resolve({});
+}
+
+// Locate the MP4 stream appended to an Android motion photo.
+async function embeddedVideoBlob(rec) {
+  const size = rec.size, tail = rec.meta.motion?.tail;
+  const isFtyp = async p => p > 0 && ascii(await readBytes(rec.file, p + 4, 4), 0, 4) === 'ftyp';
+  let start = tail && tail < size ? size - tail : -1;
+  if (!(await isFtyp(start))) {
+    start = -1;
+    const b = new Uint8Array(await rec.file.arrayBuffer());
+    const dv = dvOf(b);
+    for (let i = indexOfAscii(b, 'ftyp', 8); i >= 0; i = indexOfAscii(b, 'ftyp', i + 4)) {
+      const sz = dv.getUint32(i - 4);
+      if (sz >= 8 && sz <= 256) { start = i - 4; break; }
+    }
+  }
+  return start > 0 ? rec.file.slice(start, size, 'video/mp4') : null;
+}
+
+// ============================================================================
+// classification
+// ============================================================================
+const liveMarked = v => !!(v.meta.stillTime || v.meta.liveKey);
+const pairable = v => v.meta.duration == null || v.meta.duration <= LIVE_MAX_DUR || liveMarked(v);
+let seq = 0;
+const pairKey = r => r.dir.toLowerCase() + '/' + r.base.toLowerCase().replace(/(_hevc|_live|\s*\(live\))$/i, '');
+
+function classify(recs) {
+  const items = [];
+  const groups = new Map();
+  for (const r of recs) {
+    const k = pairKey(r);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  const rank = r => ({ heic: 0, heif: 0, hif: 0, jpg: 1, jpeg: 1, png: 2 }[r.ext] ?? 3);
+  const loneImg = [], loneVid = [];
+  for (const g of groups.values()) {
+    const imgs = g.filter(r => r.media === 'image').sort((a, b) => rank(a) - rank(b));
+    const vids = g.filter(r => r.media === 'video').sort((a, b) => (a.meta.duration ?? 0) - (b.meta.duration ?? 0));
+    while (imgs.length && vids.length && pairable(vids[0]))
+      items.push(makeItem('live', imgs.shift(), vids.shift(), '同名的照片 + 短视频，是一张实况照片的两个部分。'));
+    loneImg.push(...imgs); loneVid.push(...vids);
+  }
+  // Renamed exports: pair by the Apple ContentIdentifier shared by photo and video.
+  const byCid = new Map();
+  for (const r of loneImg) if (r.meta.contentId && !byCid.has(r.meta.contentId)) byCid.set(r.meta.contentId, r);
+  const used = new Set();
+  for (const v of loneVid) {
+    const d = v.meta.duration;
+    const im = v.meta.contentId && byCid.get(v.meta.contentId);
+    if (im && !used.has(im) && pairable(v)) { used.add(im); items.push(makeItem('live', im, v, '文件名不同，但照片和视频的「内容标识符」一致，是同一张实况照片。')); continue; }
+    const looksLive = (liveMarked(v) || (v.meta.contentId && d != null && d <= 4.5)) && (d == null || d <= LIVE_MAX_DUR);
+    if (looksLive) items.push(makeItem('live', null, v, '视频里带有 Apple 实况标记，但文件夹里没找到对应的照片（可能没一起导入，或照片被删了）。', { orphan: true }));
+    else items.push(makeItem('video', null, v, d != null && d <= LIVE_MAX_DUR ? '时长很短，但没有同名照片也没有实况标记，按普通视频处理。' : '独立的视频文件。'));
+  }
+  for (const r of loneImg) {
+    if (used.has(r)) continue;
+    if (r.meta.motion) items.push(makeItem('live', r, null, '照片里内嵌了一段视频（安卓手机的“实况 / 动态照片”格式）。', { embedded: true }));
+    else items.push(makeItem('photo', r, null, '单独的照片，没有对应的视频。'));
+  }
+  return items;
+}
+
+function imageDate(r) {
+  const m = r.meta;
+  let ts = parseDateStr(m.dto);
+  if (ts != null) return { ts, src: 'EXIF 拍摄时间' };
+  ts = parseDateStr(m.xmpDate);
+  return ts != null ? { ts, src: 'XMP 拍摄时间' } : null;
+}
+function videoDate(r) {
+  const m = r.meta;
+  let ts = parseDateStr(m.qtDate);
+  if (ts != null) return { ts, src: '视频拍摄时间' };
+  ts = parseDateStr(m.udtaDay);
+  if (ts != null) return { ts, src: '视频拍摄时间' };
+  if (m.mvhdUtc) return { ts: naiveFromUtc(m.mvhdUtc), src: '视频创建时间' };
+  return null;
+}
+function makeItem(kind, image, video, reason, extra = {}) {
+  const main = image || video;
+  const im = image?.meta || {}, vm = video?.meta || {};
+  // Thumbnails live on the main file record so they survive re-classification.
+  const it = { id: ++seq, kind, image, video, reason, ...extra, main, thumb: main.thumb || null, lowres: !!main.lowres, thumbState: main.thumbBusy ? 1 : 0, noPlay: !!video?.noPlay };
+  main.item = it;
+  it.name = main.base;
+  it.dir = main.dir;
+  it.exts = [image?.ext, video?.ext].filter(Boolean).map(e => e.toUpperCase()).join('+');
+  it.size = (image?.size || 0) + (video?.size || 0);
+  it.duration = video?.meta.duration ?? null;
+  it.width = im.w || vm.width || null;
+  it.height = it.width ? (im.w ? im.h : vm.height) : null;
+  it.device = [im.make || vm.make, im.model || vm.model].filter(Boolean).join(' ').replace(/^(\w+) \1 /i, '$1 ');
+  it.contentId = im.contentId || vm.contentId || null;
+  const d = (image && imageDate(image)) || (video && videoDate(video));
+  if (d) { it.ts = d.ts; it.dateSrc = d.src; }
+  else if (main.devDate && !main.parsed) { it.ts = main.devDate; it.dateSrc = '手机提供的时间（正在读取文件里的拍摄时间）'; }
+  else if (main.devDate) { it.ts = main.devDate; it.dateSrc = '手机提供的文件时间（文件里没有拍摄时间）'; it.noDate = true; }
+  else { it.ts = naiveFromUtc(main.mtime || Date.now()); it.dateSrc = '文件修改时间（文件里没有拍摄时间）'; it.noDate = true; }
+  it.dayKey = dayKeyOf(it.ts);
+  it.monthKey = it.dayKey.slice(0, 7);
+  if (kind === 'photo' && ((image.ext === 'png' && !im.make) || /^(screenshot|截屏|屏幕截图|snipaste)/i.test(image.base))) it.sub = 'shot';
+  if (kind === 'video' && /^(rpreplay|screenrecord|screen_record|screen-record|录屏|屏幕录制)/i.test(video.base)) it.sub = 'rec';
+  it.search = [image?.name, video?.name, it.dir].filter(Boolean).join(' ').toLowerCase();
+  return it;
+}
+
+// ============================================================================
+// scanning
+// ============================================================================
+function setProgress(text, frac) {
+  const p = $('#progress');
+  if (text == null) { p.hidden = true; return; }
+  p.hidden = false;
+  $('#ptxt').textContent = text;
+  $('#pbar').style.width = frac == null ? '0' : Math.round(frac * 100) + '%';
+}
+
+async function walkHandle(dh, prefix, out, token) {
+  for await (const [name, h] of dh.entries()) {
+    if (token !== state.scanToken) return;
+    if (h.kind === 'directory') { if (!SKIP_DIR.test(name)) await walkHandle(h, prefix + name + '/', out, token); }
+    else {
+      out.push({ name, path: prefix + name, handle: h });
+      if (out.length % 250 === 0) setProgress(`正在读取文件列表… ${out.length}`);
+    }
+  }
+}
+async function walkEntry(entry, prefix, out) {
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ name: file.name, path: prefix + file.name, file });
+  } else if (entry.isDirectory && !SKIP_DIR.test(entry.name)) {
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const ch of batch) await walkEntry(ch, prefix + entry.name + '/', out);
+    }
+  }
+}
+
+async function scanHandle(h) {
+  const token = ++state.scanToken;
+  setProgress('正在读取文件列表…');
+  const entries = [];
+  try { await walkHandle(h, '', entries, token); }
+  catch (e) { setProgress(null); toast('读取文件夹失败：' + e.message); return; }
+  if (token !== state.scanToken) return;
+  state.rootHandle = h;
+  await ingest(entries, h.name, token);
+}
+
+async function ingest(entries, rootName, token, src = null) {
+  for (const r of state.recs) if (r.thumb) URL.revokeObjectURL(r.thumb);
+  thumbQ.queue.length = 0;
+  state.items = []; state.recs = []; state.byId = new Map(); state.selected.clear(); state.filter.days.clear();
+  state.rootName = rootName; state.source = src; state.phase = 'scan';
+  $('#rootName').textContent = rootName ? (src ? '📱 ' : '📁 ') + rootName : '';
+  $('#rootName').title = rootName;
+  for (const o of document.querySelectorAll('#fSpecial option[data-dev]')) o.hidden = !src;
+  if (!src && ['new', 'imported'].includes(state.filter.special)) { state.filter.special = 'all'; $('#fSpecial').value = 'all'; }
+  render();
+
+  const recs = [];
+  let ignored = 0;
+  for (const e of entries) {
+    const name = e.name;
+    if (name.startsWith('.')) continue;
+    const dot = name.lastIndexOf('.');
+    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+    const media = VIDEO_EXT.has(ext) ? 'video' : IMAGE_EXT.has(ext) ? 'image' : null;
+    if (!media) { ignored++; continue; }
+    const slash = e.path.lastIndexOf('/');
+    const f = e.file || null;
+    recs.push({ name, base: dot > 0 ? name.slice(0, dot) : name, ext, media, dir: slash >= 0 ? e.path.slice(0, slash) : '', path: e.path, file: f, handle: e.handle || null,
+      size: isDev(f) ? f.size : 0, mtime: 0, devDate: isDev(f) ? f.lastModified || null : null, meta: {} });
+  }
+  state.recs = recs;
+  if (src) return ingestDevice(recs, token, src, ignored);
+  let done = 0, lastPaint = 0;
+  setProgress(`正在分析 0 / ${recs.length}`, 0);
+  await pool(recs, 8, async r => {
+    if (token !== state.scanToken) return;
+    try {
+      if (!r.file) r.file = await r.handle.getFile();
+      r.size = r.file.size; r.mtime = r.file.lastModified;
+      r.meta = r.media === 'video' ? await parseMovie(r.file) : await parseImage(r.file, r.ext);
+    } catch (e) { r.meta = { error: String(e) }; }
+    done++;
+    const now = performance.now();
+    if (now - lastPaint > 120) { lastPaint = now; setProgress(`正在分析 ${done} / ${recs.length}`, done / recs.length); }
+  });
+  if (token !== state.scanToken) return;
+  setProgress(null);
+  state.recs = recs.filter(r => r.file);
+  state.phase = 'idle';
+  publish(state.recs, true);
+  const c = countOf(state.items);
+  if (!state.items.length) toast('这个文件夹里没有找到照片或视频。');
+  else toast(`扫描完成：实况 ${c.live} · 视频 ${c.video} · 照片 ${c.photo}` + (ignored ? `（另有 ${ignored} 个非媒体文件，如 .AAE，已忽略）` : ''));
+}
+
+// (Re)classify and redraw, keeping thumbnails, selection, scroll position and the open viewer.
+function publish(recs, fresh = false) {
+  const selMain = new Set([...state.selected].map(id => state.byId.get(id)?.main).filter(Boolean));
+  const viewing = $('#viewer').hidden ? null : state.view[V.idx]?.main;
+  state.items = classify(recs);
+  state.byId = new Map(state.items.map(it => [it.id, it]));
+  state.selected = new Set(state.items.filter(it => selMain.has(it.main)).map(it => it.id));
+  thumbQ.queue.length = 0;   // the new cards re-request what is on screen
+  markImported();
+  $('#btnRescan').disabled = !(state.rootHandle || state.source);
+  const sc = $('#scroller'), top = sc.scrollTop;
+  render();
+  sc.scrollTop = fresh ? 0 : top;
+  if (viewing) {
+    const i = state.view.findIndex(x => x.main === viewing);
+    if (i >= 0) { V.idx = i; renderInfo(state.view[i]); $('#vPos').textContent = `${i + 1} / ${state.view.length}`; }
+  }
+}
+
+// Phone: show the list right away (names pair Live Photos, the phone supplies dates), then read
+// durations / capture times / Live markers from the files in the background, most useful first.
+async function ingestDevice(recs, token, src, ignored) {
+  const ck = r => `${src.key}|${r.path}|${r.size}`;
+  const cache = await metaCache.load(src.key + '|');
+  for (const r of recs) { const m = cache.get(ck(r)); if (m) { r.meta = m; r.parsed = true; } }
+  await loadImported();
+  if (token !== state.scanToken) return;
+  publish(recs, true);
+  const c = countOf(state.items);
+  if (!recs.length) { setProgress(null); state.phase = 'idle'; toast('手机的这些文件夹里没有找到照片或视频。'); return; }
+  toast(`读取完成：实况 ${c.live} · 视频 ${c.video} · 照片 ${c.photo}` + (ignored ? `（另有 ${ignored} 个非媒体文件已忽略）` : ''));
+
+  const groups = new Map();
+  for (const r of recs) { const k = pairKey(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+  const named = new Set();   // already has a same-name partner, so it is a Live Photo either way
+  for (const g of groups.values()) if (g.some(r => r.media === 'image') && g.some(r => r.media === 'video')) for (const r of g) named.add(r);
+  const todo = recs.filter(r => !r.parsed);
+  const stages = [
+    todo.filter(r => r.media === 'video' && !named.has(r)),   // durations, orphan Live videos
+    todo.filter(r => r.media === 'image' && !named.has(r)),   // Android motion photos, capture times
+    todo.filter(r => named.has(r)),
+  ];
+  let done = 0, lastPaint = 0;
+  state.phase = 'meta';
+  for (const list of stages) {
+    if (!list.length) continue;
+    await pool(list, 3, async r => {
+      if (token !== state.scanToken) return;
+      try { r.meta = r.media === 'video' ? await parseMovie(r.file) : await parseImage(r.file, r.ext); r.parsed = true; }
+      catch (e) { r.meta = { error: String(e) }; }
+      done++;
+      const now = performance.now();
+      if (now - lastPaint > 200) { lastPaint = now; setProgress(`正在读取视频时长和拍摄时间 ${done} / ${todo.length}（可以先浏览、筛选和导入）`, done / todo.length); }
+    });
+    if (token !== state.scanToken) return;
+    publish(recs);
+    metaCache.save(list.filter(r => r.parsed).map(r => [ck(r), r.meta]));
+  }
+  setProgress(null);
+  state.phase = 'idle';
+  pumpThumbs();
+}
+
+// ============================================================================
+// phone: device picker, scan, "already imported" marks
+// ============================================================================
+async function openDevices() {
+  const body = $('#devBody');
+  $('#devDlg').hidden = false;
+  $('#devGo').hidden = true;
+  $('#devRefresh').hidden = !HELPER;
+  if (!HELPER) {
+    body.innerHTML = `<p>直接读取手机需要用 PhotoSift 助手打开本页面：</p>
+      <ol><li>关掉这个页面。</li><li>在 PhotoSift.html 所在的文件夹里，双击 <b>启动 PhotoSift.cmd</b>。</li><li>会弹出一个小黑窗口（助手，用的时候别关），浏览器会自动打开 PhotoSift，这时「连接手机」就能用了。</li></ol>
+      <p class="note">助手只在本机运行，只读手机、不改手机里的任何东西；文件不会上传到任何地方。</p>`;
+    return;
+  }
+  body.innerHTML = '<p class="muted">正在查找用数据线连接的手机…</p>';
+  let list;
+  try { list = await api('/api/devices' + (/[?&]all=1/.test(location.search) ? '?all=1' : '')); }
+  catch (e) { body.innerHTML = `<p>查找设备失败：${esc(deviceErr(e))}</p>`; return; }
+  if (!list.length) {
+    body.innerHTML = `<p>没有找到手机。请检查：</p>
+      <ol><li>用数据线把手机连到电脑，并<b>解锁手机</b>。</li><li>iPhone 第一次连接会问「要信任此电脑吗？」，点<b>信任</b>并输入锁屏密码。</li><li>安卓手机下拉通知栏，把 USB 用途改成<b>传输文件</b>。</li><li>然后点下面的「刷新」。</li></ol>
+      <p class="note">iPhone 建议先在 <b>设置 → 照片 → 传输到 Mac 或 PC</b> 选「保留原片」，读取更快，实况配对信息也更完整。</p>`;
+    return;
+  }
+  if (list.length === 1) return openDevice(list[0]);
+  body.innerHTML = '<p class="muted">选择要读取的设备：</p><div class="devlist">'
+    + list.map((d, i) => `<button class="devrow" data-i="${i}">${ICON.phone}<span><b>${esc(d.name || '未命名设备')}</b><small>${esc([d.maker, d.desc].filter(Boolean).join(' · '))}</small></span></button>`).join('') + '</div>';
+  for (const b of body.querySelectorAll('.devrow')) b.onclick = () => openDevice(list[+b.dataset.i]);
+}
+async function openDevice(d) {
+  const body = $('#devBody');
+  body.innerHTML = `<p class="muted">正在打开「${esc(d.name)}」…</p>`;
+  let st;
+  try { st = await api('/api/folders?dev=' + enc(d.id)); }
+  catch (e) { body.innerHTML = `<p>打不开「${esc(d.name)}」：${esc(deviceErr(e))}</p>`; return; }
+  const all = st.flatMap(s => s.folders.map(f => ({ ...f, sname: s.name })));
+  if (!all.length) {
+    body.innerHTML = `<p>「${esc(d.name)}」里看不到照片文件夹。</p><ol><li>手机需要<b>保持解锁</b>；iPhone 要在手机上点过「信任」。</li><li>安卓手机要把 USB 用途改成「传输文件」。</li><li>然后点「刷新」。</li></ol>`;
+    return;
+  }
+  const multi = st.length > 1;
+  const start = roots => { $('#devDlg').hidden = true; scanDevice(d, roots.map(f => ({ id: f.id, path: (multi ? f.sname + '/' : '') + f.name }))); };
+  if (all.length === 1 && /^dcim$/i.test(all[0].name)) return start(all);   // iPhone: only DCIM, nothing to choose
+  const saved = prefs.get('devRoots.' + d.name, null);
+  const DEF = /^(dcim|pictures|movies|camera|screenshots|screenrecorder)$/i;
+  body.innerHTML = `<p>要读取「${esc(d.name)}」里的哪些文件夹？</p><div class="folders">`
+    + st.map(s => `<div class="stor"><div class="muted">${esc(s.name)}</div>` + s.folders.map(f => {
+      const on = saved ? saved.includes(s.name + '/' + f.name) : DEF.test(f.name);
+      return `<label><input type="checkbox" data-id="${esc(f.id)}"${on ? ' checked' : ''}> ${esc(f.name)}</label>`;
+    }).join('') + '</div>').join('')
+    + '</div><p class="note">相机拍的照片和视频在 DCIM；截屏、微信等保存的图片一般在 Pictures。选得越少，读得越快。</p>';
+  $('#devGo').hidden = false;
+  $('#devGo').onclick = () => {
+    const ids = new Set([...body.querySelectorAll('input:checked')].map(i => i.dataset.id));
+    const roots = all.filter(f => ids.has(f.id));
+    if (!roots.length) { toast('至少选一个文件夹。'); return; }
+    prefs.set('devRoots.' + d.name, roots.map(f => f.sname + '/' + f.name));
+    start(roots);
+  };
+}
+async function scanDevice(d, roots) {
+  const token = ++state.scanToken;
+  state.rootHandle = null;
+  state.lastDevice = { d, roots };
+  setProgress(`正在读取「${d.name}」的文件列表…`);
+  const entries = [];
+  let err = null;
+  try {
+    const r = await api('/api/scan', { dev: d.id, roots }, { raw: true });
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (token !== state.scanToken) { reader.cancel(); return; }
+      if (done) break;
+      buf += value;
+      for (let i; (i = buf.indexOf('\n')) >= 0;) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        const m = JSON.parse(line);
+        if (m.t === 'f') entries.push({ name: m.n, path: m.p, file: new DevFile(d.id, m.id, m.n, m.s, m.c || m.m || 0) });
+        else if (m.t === 'p') setProgress(`正在读取「${d.name}」的文件列表… 已找到 ${m.n} 个文件`);
+        else if (m.t === 'err') err = m.msg;
+      }
+    }
+  } catch (e) { err = e.code || e.message; }
+  if (token !== state.scanToken) return;
+  if (err && !entries.length) { setProgress(null); toast('读取手机失败：' + deviceErr(err), 9000); return; }
+  if (err) toast('读到一半出错了，下面只显示已读到的部分：' + deviceErr(err), 9000);
+  ingest(entries, d.name, token, { dev: d.id, name: d.name, key: d.name });
+}
+// Files already in the last import folder (matched by name + size) get an "已导入" mark.
+const impKey = r => r.name.toLowerCase() + '|' + r.size;
+async function loadImported() {
+  state.imported = null;
+  const dest = prefs.get('lastDest', '');
+  if (!HELPER || !state.source || !dest) return;
+  try { state.imported = new Set((await api('/api/dest-index', { dest })).files); } catch { /* folder gone */ }
+}
+function markImported() {
+  const S = state.imported;
+  for (const it of state.items) it.imported = !!S && [it.image, it.video].some(r => r && S.has(impKey(r)));
+}
+
+async function pickFolder() {
+  if (window.showDirectoryPicker) {
+    try {
+      const h = await window.showDirectoryPicker({ id: 'photosift-src', mode: 'read' });
+      idb.set('lastRoot', h);
+      return scanHandle(h);
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      console.warn('showDirectoryPicker failed, falling back', e);
+    }
+  }
+  $('#dirInput').click();
+}
+
+// ============================================================================
+// filtering & grouping
+// ============================================================================
+function matches(it, { ignoreDays = false, ignoreKind = false } = {}) {
+  const f = state.filter;
+  if (!ignoreKind && f.kind !== 'all' && it.kind !== f.kind) return false;
+  if (!ignoreDays && f.days.size && !f.days.has(it.dayKey)) return false;
+  if (f.dur !== 'all') {
+    if (it.kind !== 'video') return false;
+    const [lo, hi] = DUR[f.dur], d = it.duration ?? 0;
+    if (d < lo || d >= hi) return false;
+  }
+  switch (f.special) {
+    case 'orphan': if (!it.orphan) return false; break;
+    case 'embedded': if (!it.embedded) return false; break;
+    case 'screen': if (!it.sub) return false; break;
+    case 'noscreen': if (it.sub) return false; break;
+    case 'nodate': if (!it.noDate) return false; break;
+    case 'new': if (it.imported) return false; break;
+    case 'imported': if (!it.imported) return false; break;
+  }
+  if (f.q && !it.search.includes(f.q)) return false;
+  return true;
+}
+const SORTS = {
+  'time-desc': (a, b) => b.ts - a.ts || b.id - a.id,
+  'time-asc': (a, b) => a.ts - b.ts || a.id - b.id,
+  size: (a, b) => b.size - a.size,
+  dur: (a, b) => (b.duration ?? -1) - (a.duration ?? -1) || b.ts - a.ts,
+  name: (a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }),
+};
+function buildGroups() {
+  const list = state.items.filter(it => matches(it)).sort(SORTS[state.sort]);
+  if (state.group === 'none') return list.length ? [{ key: 'all', title: '全部', wk: '', items: list }] : [];
+  const map = new Map();
+  for (const it of list) {
+    const k = state.group === 'day' ? it.dayKey : it.monthKey;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(it);
+  }
+  const keys = [...map.keys()].sort();
+  if (state.sort !== 'time-asc') keys.reverse();
+  return keys.map(k => {
+    if (state.group === 'day') { const d = dayInfo(k); return { key: k, title: d.title, wk: d.wk, items: map.get(k) }; }
+    const [y, m] = k.split('-').map(Number);
+    return { key: k, title: `${y}年${m}月`, wk: '', items: map.get(k) };
+  });
+}
+function countOf(items) {
+  const c = { live: 0, video: 0, photo: 0, size: 0, dur: 0 };
+  for (const it of items) { c[it.kind]++; c.size += it.size; if (it.kind === 'video') c.dur += it.duration || 0; }
+  return c;
+}
+function sumHTML(c) {
+  const parts = [];
+  if (c.live) parts.push(`<span class="l"><b>${c.live}</b> 实况</span>`);
+  if (c.video) parts.push(`<span class="v"><b>${c.video}</b> 视频${c.dur ? ' · ' + fmtDur(c.dur) : ''}</span>`);
+  if (c.photo) parts.push(`<span><b>${c.photo}</b> 照片</span>`);
+  parts.push(`<span>${fmtSize(c.size)}</span>`);
+  return parts.join('');
+}
+
+// ============================================================================
+// rendering
+// ============================================================================
+function render() {
+  renderKinds();
+  renderDays();
+  renderGrid();
+  renderSelbar();
+}
+function renderKinds() {
+  const c = { all: 0, live: 0, video: 0, photo: 0 };
+  for (const it of state.items) if (matches(it, { ignoreKind: true })) { c.all++; c[it.kind]++; }
+  for (const b of document.querySelectorAll('.kind')) {
+    b.classList.toggle('on', b.dataset.kind === state.filter.kind);
+    b.querySelector('.n').textContent = c[b.dataset.kind];
+  }
+}
+function renderDays() {
+  const el = $('#dayList');
+  if (!state.items.length) return;
+  const counts = new Map();
+  for (const it of state.items) {
+    if (!matches(it, { ignoreDays: true, ignoreKind: true })) continue;
+    if (!counts.has(it.dayKey)) counts.set(it.dayKey, { live: 0, video: 0, photo: 0 });
+    counts.get(it.dayKey)[it.kind]++;
+  }
+  const kind = state.filter.kind;
+  const keys = [...counts.keys()].filter(k => kind === 'all' || counts.get(k)[kind] > 0).sort().reverse();
+  state.visibleDays = keys;
+  if (!keys.length) { el.innerHTML = '<div class="side-empty">没有符合条件的日期。</div>'; return; }
+  let html = '', month = '';
+  for (const k of keys) {
+    const mk = k.slice(0, 7);
+    if (mk !== month) {
+      month = mk;
+      const [y, m] = mk.split('-').map(Number);
+      const n = keys.filter(x => x.startsWith(mk)).length;
+      html += `<div class="month" data-month="${mk}" title="点击选中整月"><span>${y} 年 ${m} 月</span><span>${n} 天</span></div>`;
+    }
+    const c = counts.get(k), d = dayInfo(k);
+    const show = x => kind === 'all' || kind === x;
+    const tip = `实况 ${c.live} · 视频 ${c.video} · 照片 ${c.photo}`;
+    html += `<div class="day${state.filter.days.has(k) ? ' on' : ''}" data-day="${k}" title="${tip}"><span class="d">${d.short}<span class="wk">${d.rel || d.wkOnly}</span></span><span class="c">`
+      + (c.live && show('live') ? `<span class="l">${c.live}</span>` : '')
+      + (c.video && show('video') ? `<span class="v">${c.video}</span>` : '')
+      + (c.photo && show('photo') ? `<span class="p">${c.photo}</span>` : '')
+      + '</span></div>';
+  }
+  el.innerHTML = html;
+}
+
+function emptyHTML() {
+  return `<div class="empty">
+    <div class="drop">
+      <svg width="54" height="54" viewBox="0 0 54 54" aria-hidden="true"><rect x="3" y="9" width="34" height="34" rx="7" fill="none" stroke="var(--faint)" stroke-width="2"/><circle cx="20" cy="26" r="4" fill="var(--live)"/><circle cx="20" cy="26" r="8.5" fill="none" stroke="var(--live)" stroke-width="2"/><rect x="25" y="19" width="26" height="26" rx="6" fill="var(--panel)" stroke="var(--video)" stroke-width="2"/><path d="M34 26.5l9 5.5-9 5.5z" fill="var(--video)"/></svg>
+      <h1>${HELPER ? '连接手机，直接看手机里的实况和视频' : '把从手机导入的文件夹拖到这里'}</h1>
+      <p>会自动分出 <b style="color:var(--live)">实况</b>、<b style="color:var(--video)">视频</b> 和照片，并按拍摄日期排好</p>
+      <div class="row">${HELPER ? '<button class="btn primary" data-act="phone">连接手机</button><button class="btn" data-act="open">选择文件夹</button>' : '<button class="btn primary" data-act="open">选择文件夹</button><button class="btn" data-act="phone">连接手机</button>'}<button class="btn" data-act="last" hidden></button></div>
+      <p class="note">${HELPER ? '也可以把电脑上的文件夹拖到这里。' : ''}文件只在本机读取，不会上传到任何地方。<br>推荐用最新版 Chrome 或 Edge 打开本页面。</p>
+    </div>
+    <div class="tips">
+      ${HELPER ? `<h3>直接从手机读取</h3>
+      <ol>
+        <li>iPhone：<b>设置 → 照片 → 传输到 Mac 或 PC</b>，选「保留原片」（不转格式，更快，也保留实况配对信息）。</li>
+        <li>用数据线连电脑，<b>解锁手机</b>，iPhone 上点「信任」；安卓把 USB 用途改成「传输文件」。</li>
+        <li>点「连接手机」。几秒后就能按天看到实况和视频，不用先复制。</li>
+        <li>选好后点「导入到电脑」：保留原始拍摄日期，已导入过的自动跳过。</li>
+      </ol>` : `<h3>想直接读手机，不用先复制？</h3>
+      <ol>
+        <li>在本页面所在的文件夹里，双击 <b>启动 PhotoSift.cmd</b>（会打开一个小助手窗口，用的时候别关）。</li>
+        <li>浏览器会自动打开 PhotoSift，点「连接手机」即可。</li>
+      </ol>
+      <h3>或者先拷到电脑上</h3>
+      <ol>
+        <li>iPhone：<b>设置 → 照片 → 传输到 Mac 或 PC</b>，选「保留原片」。</li>
+        <li>打开 <b>此电脑 → Apple iPhone → Internal Storage → DCIM</b>，把里面的文件夹复制到电脑，然后在这里打开。</li>
+      </ol>`}
+      <h3>怎么区分的？</h3>
+      <ul>
+        <li><b>实况</b>：同名的照片 + 短视频（如 IMG_1234.HEIC + IMG_1234.MOV），或视频里带 Apple 实况标记；安卓的实况/动态照片是内嵌视频的 JPG，也能认出来。</li>
+        <li><b>视频</b>：其余视频文件，显示时长，可按时长筛选。</li>
+        <li><b>日期</b>：用照片/视频里记录的拍摄时间，不是文件复制时间。</li>
+      </ul>
+      <h3>快捷键</h3>
+      <p class="muted" style="margin:0">1 全部 · 2 实况 · 3 视频 · 4 照片 · / 搜索 · Ctrl+A 全选 · Esc 取消选择</p>
+    </div>
+  </div>`;
+}
+async function setupEmpty() {
+  const btn = document.querySelector('.empty [data-act="last"]');
+  if (!btn) return;
+  const h = await idb.get('lastRoot');
+  if (h && h.kind === 'directory') {
+    btn.hidden = false;
+    btn.textContent = '继续上次：' + h.name;
+    btn.onclick = async () => {
+      try {
+        if ((await h.queryPermission({ mode: 'read' })) !== 'granted' && (await h.requestPermission({ mode: 'read' })) !== 'granted') return;
+        scanHandle(h);
+      } catch (e) { toast('无法打开上次的文件夹，请重新选择。'); }
+    };
+  }
+}
+
+function cardHTML(it) {
+  let badge = '', flag = '';
+  if (it.kind === 'live') badge = `<span class="badge live">${ICON.live}实况</span>`;
+  else if (it.kind === 'video') badge = `<span class="badge video">${ICON.play}${fmtDur(it.duration) || '视频'}</span>`;
+  if (it.orphan) flag = '<span class="flag warn">缺照片</span>';
+  else if (it.embedded) flag = '<span class="flag">内嵌视频</span>';
+  else if (it.sub === 'shot') flag = '<span class="flag">截屏</span>';
+  else if (it.sub === 'rec') flag = '<span class="flag">录屏</span>';
+  const img = it.thumb ? `<img class="ok" src="${it.thumb}" alt="">` : '';
+  const ph = it.thumb ? '' : `<div class="ph">${it.kind === 'photo' ? ICON.photo : ICON.video}${it.thumbState === 2 ? '<span>无法预览</span>' : ''}</div>`;
+  const imp = it.imported ? '<span class="tag-imp">已导入</span>' : '';
+  return `<div class="card k-${it.kind}${state.selected.has(it.id) ? ' sel' : ''}${it.imported ? ' imp' : ''}" data-id="${it.id}" title="${esc((it.dir ? it.dir + '/' : '') + it.name)}">`
+    + `<div class="thumb">${ph}${img}${badge}${flag}${imp}<button class="check" aria-label="选择">${ICON.check}</button></div>`
+    + `<div class="meta"><span class="nm">${esc(it.name)} <span class="ext">${it.exts}</span></span><span class="sz">${fmtSize(it.size)}</span></div></div>`;
+}
+
+let io = null;
+function renderGrid() {
+  const sc = $('#scroller');
+  io?.disconnect();
+  stopHover();
+  if (!state.items.length) {
+    state.view = [];
+    if (!sc.querySelector('.empty')) { sc.innerHTML = emptyHTML(); setupEmpty(); }
+    $('#viewSum').textContent = '';
+    return;
+  }
+  const groups = buildGroups();
+  state.view = groups.flatMap(g => g.items);
+  const all = countOf(state.view);
+  $('#viewSum').textContent = `${state.view.length} 项 · ${fmtSize(all.size)}${all.dur ? ' · 视频共 ' + fmtDur(all.dur) : ''}`;
+  if (!state.view.length) {
+    sc.innerHTML = '<div class="noresult">没有符合筛选条件的文件。<br><br><button class="btn" data-act="reset">清除所有筛选</button></div>';
+    return;
+  }
+  let html = '';
+  for (const g of groups) {
+    const c = countOf(g.items);
+    html += `<section class="section"><div class="sec-head"><h2>${g.title}</h2>${g.wk ? `<span class="wk">${g.wk}</span>` : ''}<span class="sum">${sumHTML(c)}</span><button class="selgrp" data-key="${g.key}">选择这${state.group === 'day' ? '天' : state.group === 'month' ? '个月' : '些'}</button></div><div class="grid">${g.items.map(cardHTML).join('')}</div></section>`;
+  }
+  sc.innerHTML = html;
+  state.groups = groups;
+  thumbQ.vis.clear();
+  io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      const it = state.byId.get(+e.target.dataset.id);
+      if (!it) continue;
+      if (e.isIntersecting) { thumbQ.vis.add(it); wantThumb(it); } else { thumbQ.vis.delete(it); dropThumb(it); }
+    }
+    pumpThumbs();
+  }, { root: sc, rootMargin: '500px 0px' });
+  for (const el of sc.querySelectorAll('.card')) io.observe(el);
+}
+const cardEl = id => $('#scroller').querySelector(`.card[data-id="${id}"]`);
+
+// ============================================================================
+// thumbnails
+// ============================================================================
+// vis = items on (or near) screen. Phone items first get the phone's own small thumbnail; once the
+// background metadata pass is done, visible low-res ones are redrawn from the real file.
+const thumbQ = { queue: [], running: 0, max: 3, vis: new Set() };
+function wantThumb(it) {
+  if (it.thumb || it.thumbState || it.main.thumbBusy) return;
+  it.thumbState = 1;
+  thumbQ.queue.push(it);
+}
+function dropThumb(it) {
+  const i = thumbQ.queue.indexOf(it);
+  if (i >= 0) { thumbQ.queue.splice(i, 1); it.thumbState = 0; }
+}
+function nextUpgrade() {
+  if (state.phase !== 'idle') return null;
+  for (const it of thumbQ.vis) if (it.lowres && !it.main.thumbBusy && !it.main.upgraded) { it.main.upgraded = true; return it; }
+  return null;
+}
+function pumpThumbs() {
+  while (thumbQ.running < thumbQ.max) {
+    const it = thumbQ.queue.pop() || nextUpgrade();   // newest request first = what's on screen now
+    if (!it) break;
+    const rec = it.main, upgrade = !!it.thumb;
+    rec.thumbBusy = true;
+    thumbQ.running++;
+    makeThumb(it, upgrade).then(({ url, lowres }) => {
+      if (rec.thumb) URL.revokeObjectURL(rec.thumb);
+      rec.thumb = url; rec.lowres = lowres;
+      const cur = rec.item;                            // publish() may have rebuilt the item meanwhile
+      Object.assign(cur, { thumb: url, lowres, thumbState: 0 });
+      const el = cardEl(cur.id);
+      if (el) {
+        let img = el.querySelector('.thumb img');
+        if (!img) { img = new Image(); img.alt = ''; img.onload = () => img.classList.add('ok'); el.querySelector('.thumb').prepend(img); }
+        img.src = url;
+        el.querySelector('.ph')?.remove();
+      }
+    }).catch(() => {
+      if (upgrade) return;
+      const cur = rec.item;
+      cur.thumbState = 2;
+      const ph = cardEl(cur.id)?.querySelector('.ph');
+      if (ph && !ph.querySelector('span')) ph.insertAdjacentHTML('beforeend', '<span>无法预览</span>');
+    }).finally(() => { rec.thumbBusy = false; thumbQ.running--; pumpThumbs(); });
+  }
+}
+function canvasURL(src, w, h) {
+  const s = Math.min(1, 360 / Math.min(w, h));   // thumbs are square-cropped, so size by the short side
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return new Promise((res, rej) => c.toBlob(b => b ? res(URL.createObjectURL(b)) : rej(new Error('toBlob')), 'image/jpeg', 0.82));
+}
+function videoThumb(blob, pick) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    v.muted = true; v.preload = 'auto'; v.playsInline = true;
+    const src = srcOf(blob), url = src.url;
+    let done = false;
+    const finish = (err, res) => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      v.removeAttribute('src'); v.load(); src.revoke();
+      err ? reject(err) : resolve(res);
+    };
+    const timer = setTimeout(() => finish(new Error('timeout')), 15000);
+    v.onerror = () => finish(new Error('decode'));
+    v.onloadedmetadata = () => {
+      if (!v.videoWidth) return finish(new Error('novideo'));
+      const d = isFinite(v.duration) ? v.duration : 0;
+      v.currentTime = Math.max(0.05, Math.min(pick(d), d - 0.05));
+    };
+    v.onseeked = () => {
+      canvasURL(v, v.videoWidth, v.videoHeight).then(u => finish(null, { url: u, w: v.videoWidth, h: v.videoHeight }), finish);
+    };
+    v.src = url;
+  });
+}
+let heicP = null, heicWarned = false;
+function loadHeic() {
+  return heicP ||= new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = HEIC_LIB;
+    s.onload = () => window.HeicTo ? res(window.HeicTo) : rej(new Error('HeicTo missing'));
+    s.onerror = () => rej(new Error('load failed'));
+    document.head.appendChild(s);
+  }).catch(e => {
+    if (!heicWarned) { heicWarned = true; toast('HEIC 解码组件加载失败（需要联网），HEIC 照片暂时不显示缩略图，分类和筛选不受影响。', 7000); }
+    throw e;
+  });
+}
+const heicSem = { n: 0, max: 2, wait: [] };
+async function withHeic(fn) {
+  while (heicSem.n >= heicSem.max) await new Promise(r => heicSem.wait.push(r));
+  heicSem.n++;
+  try { return await fn(); } finally { heicSem.n--; heicSem.wait.shift()?.(); }
+}
+async function imageThumb(rec) {
+  let bmp = null;
+  const blob = await asBlob(rec.file);
+  if (!HEIC_EXT.has(rec.ext)) {
+    bmp = await createImageBitmap(blob, { resizeWidth: THUMB_W, resizeQuality: 'medium' });
+  } else {
+    try { bmp = await createImageBitmap(blob, { resizeWidth: THUMB_W, resizeQuality: 'medium' }); }   // Safari / future Chrome
+    catch {
+      const H = await loadHeic();
+      bmp = await withHeic(() => H({ blob, type: 'bitmap', options: { resizeWidth: THUMB_W, resizeQuality: 'medium' } }));
+    }
+  }
+  try { return await canvasURL(bmp, bmp.width, bmp.height); } finally { bmp.close?.(); }
+}
+// The small preview the phone keeps for each file: fast, but often only ~160 px.
+async function phoneThumb(rec) {
+  const r = await fetch(rec.file.thumbUrl);
+  if (r.status !== 200) return null;
+  const bmp = await createImageBitmap(await r.blob());
+  try { return { url: await canvasURL(bmp, bmp.width, bmp.height), lowres: Math.min(bmp.width, bmp.height) < 200 }; }
+  finally { bmp.close?.(); }
+}
+async function makeThumb(it, upgrade = false) {
+  if (isDev(it.main.file) && !upgrade) {
+    const t = await phoneThumb(it.main).catch(() => null);
+    if (t) return t;
+  }
+  if (it.video && !it.noPlay) {
+    try {
+      // Live Photo key frame sits in the middle of the clip; for videos skip the first black frames.
+      const r = await videoThumb(it.video.file, d => it.kind === 'live' ? d / 2 : Math.min(1, d * 0.1));
+      if (!it.width) { it.width = r.w; it.height = r.h; }
+      return { url: r.url, lowres: false };
+    } catch (e) {
+      it.noPlay = it.video.noPlay = true;
+      if (!it.image) throw e;
+    }
+  }
+  return { url: await imageThumb(it.image), lowres: false };
+}
+
+// hover-to-play preview for Live Photos and videos
+let hover = null, hoverTimer = 0;
+function stopHover() {
+  clearTimeout(hoverTimer);
+  if (!hover) return;
+  hover.v.pause(); hover.v.removeAttribute('src'); hover.v.load(); hover.v.remove();
+  hover.src.revoke();
+  hover = null;
+}
+async function startHover(card, it) {
+  let blob = it.video?.file;
+  if (!blob && it.embedded) { try { blob = await embeddedVideoBlob(it.image); } catch { blob = null; } }
+  if (!blob || !card.isConnected || !card.matches(':hover')) return;
+  stopHover();
+  const v = document.createElement('video');
+  v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
+  const src = srcOf(blob);
+  v.src = src.url;
+  v.onplaying = () => v.classList.add('ok');
+  v.onerror = () => { it.noPlay = true; if (it.video) it.video.noPlay = true; stopHover(); };
+  card.querySelector('.thumb').insertBefore(v, card.querySelector('.badge'));
+  hover = { card, v, src };
+}
+
+// ============================================================================
+// selection
+// ============================================================================
+function setSel(id, on) {
+  on ? state.selected.add(id) : state.selected.delete(id);
+  cardEl(id)?.classList.toggle('sel', on);
+}
+function renderSelbar() {
+  const n = state.selected.size;
+  document.body.classList.toggle('selmode', n > 0);
+  $('#selbar').hidden = n === 0;
+  if (!n) return;
+  const sel = [...state.selected].map(id => state.byId.get(id)).filter(Boolean);
+  const c = countOf(sel);
+  const parts = [];
+  if (c.live) parts.push(`实况 ${c.live}`);
+  if (c.video) parts.push(`视频 ${c.video}`);
+  if (c.photo) parts.push(`照片 ${c.photo}`);
+  $('#selTxt').textContent = `已选 ${n} 项（${parts.join(' · ')}）· ${fmtSize(c.size)}`;
+  $('#btnCopy').textContent = state.source ? '导入到电脑…' : '复制到文件夹…';
+}
+function selectItems(items) {
+  const allOn = items.every(it => state.selected.has(it.id));
+  for (const it of items) setSel(it.id, !allOn);
+  renderSelbar();
+}
+function clearSel() { for (const id of [...state.selected]) setSel(id, false); renderSelbar(); }
+
+// ============================================================================
+// viewer
+// ============================================================================
+const V = { idx: -1, revokes: [], mode: null, token: 0 };
+function vCleanup() {
+  const st = $('#vStage');
+  for (const v of st.querySelectorAll('video')) { v.pause(); v.removeAttribute('src'); v.load(); }
+  st.innerHTML = '';
+  for (const r of V.revokes) r();
+  V.revokes = [];
+}
+function openViewer(id) {
+  const i = state.view.findIndex(x => x.id === id);
+  if (i < 0) return;
+  stopHover();
+  V.idx = i; V.mode = null;
+  $('#viewer').hidden = false;
+  showViewer();
+}
+function closeViewer() { V.token++; vCleanup(); $('#viewer').hidden = true; V.idx = -1; }
+function stepViewer(d) {
+  const n = V.idx + d;
+  if (n < 0 || n >= state.view.length) return;
+  V.idx = n; V.mode = null;
+  showViewer();
+}
+function playError(it, mode, e) {
+  if (mode === 'photo') {
+    if (it.image && !NATIVE_IMG.has(it.image.ext) && !HEIC_EXT.has(it.image.ext)) return `浏览器无法直接显示 ${it.image.ext.toUpperCase()} 格式。`;
+    return 'HEIC 照片解码失败' + (heicWarned ? '（解码组件需要联网加载）' : '') + '。';
+  }
+  if (e?.message === 'noembedded') return '没找到这张照片里内嵌的视频数据。';
+  return '浏览器无法播放这个视频，多半是 HEVC (H.265) 编码。\n用最新版 Chrome 一般可以直接播放；Edge 需要在 Microsoft Store 安装「HEVC 视频扩展」。分类和筛选不受影响。';
+}
+async function showViewer() {
+  const it = state.view[V.idx];
+  if (!it) return closeViewer();
+  vCleanup();
+  const token = ++V.token;
+  const mode = V.mode ||= it.kind === 'photo' ? 'photo' : 'motion';
+  $('#vTabs').innerHTML = it.kind === 'live'
+    ? `<button data-mode="motion" class="${mode === 'motion' ? 'on' : ''}">${ICON.live}动态</button><button data-mode="photo" class="${mode === 'photo' ? 'on' : ''}"${it.image ? '' : ' disabled title="缺少照片文件"'}>照片</button>`
+    : '';
+  $('#vPos').textContent = `${V.idx + 1} / ${state.view.length}`;
+  $('#vPrev').disabled = V.idx === 0;
+  $('#vNext').disabled = V.idx === state.view.length - 1;
+  renderInfo(it);
+  const st = $('#vStage');
+  st.innerHTML = (it.thumb ? `<img class="v-ph" src="${it.thumb}" alt="">` : '') + '<div class="spinner"></div>';
+  try {
+    if (mode === 'motion') {
+      const blob = it.video ? it.video.file : await embeddedVideoBlob(it.image);
+      if (token !== V.token) return;
+      if (!blob) throw new Error('noembedded');
+      const src = srcOf(blob);
+      V.revokes.push(src.revoke);
+      const v = document.createElement('video');
+      v.controls = true; v.autoplay = true; v.playsInline = true; v.loop = it.kind === 'live';
+      v.src = src.url;
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('nocodec')); });
+      if (token !== V.token) return;
+      st.innerHTML = '';
+      st.appendChild(v);
+      v.play().catch(() => {});
+    } else {
+      const rec = it.image;
+      let blob = rec.file;
+      if (HEIC_EXT.has(rec.ext)) { const H = await loadHeic(); const raw = await asBlob(rec.file); blob = await withHeic(() => H({ blob: raw, type: 'image/jpeg', quality: 0.92 })); }
+      if (token !== V.token) return;
+      const src = srcOf(blob);
+      V.revokes.push(src.revoke);
+      const img = new Image();
+      img.src = src.url;
+      await img.decode();
+      if (token !== V.token) return;
+      st.innerHTML = '';
+      st.appendChild(img);
+    }
+  } catch (e) {
+    if (token !== V.token) return;
+    st.querySelector('.spinner')?.remove();
+    const div = document.createElement('div');
+    div.className = 'v-err';
+    div.style.whiteSpace = 'pre-line';
+    div.textContent = playError(it, mode, e);
+    st.appendChild(div);
+  }
+}
+function fullPath(rec) { return (state.rootName ? state.rootName + '\\' : '') + rec.path.replace(/\//g, '\\'); }
+function renderInfo(it) {
+  const kindTxt = it.kind === 'live' ? (it.embedded ? '实况（内嵌视频）' : it.orphan ? '实况视频（缺照片）' : '实况照片')
+    : it.kind === 'video' ? (it.sub === 'rec' ? '视频 · 屏幕录制' : '视频') : (it.sub === 'shot' ? '照片 · 截屏' : '照片');
+  const icon = it.kind === 'live' ? ICON.live : it.kind === 'video' ? ICON.play : '';
+  const rows = [];
+  const d = dayInfo(it.dayKey);
+  rows.push(['拍摄时间', `${d.title} ${d.wkOnly} ${fmtTime(it.ts)}<small>来源：${esc(it.dateSrc)}</small>`]);
+  if (it.duration != null) rows.push(['时长', fmtDurLong(it.duration)]);
+  if (it.width) rows.push(['分辨率', `${it.width} × ${it.height}`]);
+  rows.push(['大小', fmtSize(it.size) + (it.image && it.video ? `<small>照片 ${fmtSize(it.image.size)} + 视频 ${fmtSize(it.video.size)}</small>` : '')]);
+  if (it.device) rows.push(['设备', esc(it.device)]);
+  for (const rec of [it.image, it.video].filter(Boolean)) rows.push([rec.media === 'image' ? '照片文件' : '视频文件', esc(fullPath(rec))]);
+  if (it.contentId) rows.push(['内容标识', `<small style="color:#999">${esc(it.contentId)}</small>`]);
+  const sel = state.selected.has(it.id);
+  $('#vInfo').innerHTML = `<span class="v-kind k-${it.kind}">${icon}${kindTxt}</span>
+    <h3>${esc(it.name)} <span style="color:#777;font-size:13px;font-weight:400">${it.exts}</span></h3>
+    <p class="why">${esc(it.reason)}</p>
+    <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+    <div class="v-act"><button class="btn${sel ? '' : ' primary'}" data-act="vsel">${sel ? '取消选择' : '选择'}</button><button class="btn" data-act="vpath">复制路径</button></div>
+    <div class="v-keys">← → 上一个/下一个 · 空格 选择<br>${it.kind === 'live' && it.image ? 'L 切换动态/照片 · ' : ''}Esc 关闭</div>`;
+}
+
+// ============================================================================
+// copy to folder & CSV
+// ============================================================================
+let copyItems = [], copyAbort = null, importJob = null;
+const KIND_DIR = { live: '实况', video: '视频', photo: '照片' };
+const subdirs = (it, layout) => layout === 'day' ? [it.dayKey] : layout === 'kind' ? [KIND_DIR[it.kind]] : layout === 'day-kind' ? [it.dayKey, KIND_DIR[it.kind]] : [];
+function recsToCopy(it, live) {
+  const recs = [it.image, it.video].filter(Boolean);
+  if (it.kind !== 'live' || !it.image || !it.video) return recs;
+  return live === 'photo' ? [it.image] : live === 'video' ? [it.video] : recs;
+}
+function openCopy(items) {
+  const dev = !!state.source;
+  if (!dev && !window.showDirectoryPicker) { toast('当前浏览器不支持写入文件夹，请用最新版 Chrome 或 Edge 打开本页面。', 6000); return; }
+  copyItems = items;
+  const c = countOf(items);
+  const parts = [];
+  if (c.live) parts.push(`实况 ${c.live}`);
+  if (c.video) parts.push(`视频 ${c.video}`);
+  if (c.photo) parts.push(`照片 ${c.photo}`);
+  $('#copySum').textContent = `共 ${items.length} 项（${parts.join(' · ')}），约 ${fmtSize(c.size)}`;
+  $('#copyTitle').textContent = dev ? '导入到电脑' : '复制到文件夹';
+  $('#destField').hidden = !dev;
+  if (dev) $('#copyDest').value = prefs.get('lastDest', '') || (helperInfo?.pictures ? helperInfo.pictures + '\\PhotoSift 导入' : '');
+  $('#copyNote').innerHTML = dev
+    ? '只从手机复制，不会删除或改动手机里的任何文件。<br>导入的文件会把「创建日期 / 修改日期」设成拍摄时间。目标里已有同名且大小相同的文件会跳过，大小不同则自动改名。'
+    : '只复制，不会移动或删除原文件。目标里已有同名且大小相同的文件会跳过，大小不同则自动改名。<br>注意：浏览器复制出的文件「修改日期」会是今天，照片/视频里的拍摄时间不受影响。';
+  $('#copyLayout').value = prefs.get('copyLayout', 'day');
+  $('#copyProg').hidden = true;
+  $('#copyOpen').hidden = true;
+  $('#copyGo').hidden = false;
+  $('#copyGo').disabled = false;
+  $('#copyGo').textContent = dev ? '开始导入' : '选择目标文件夹并开始';
+  $('#copyCancel').textContent = '取消';
+  $('#copyDlg').hidden = false;
+}
+function copyLocked(on) {
+  for (const el of document.querySelectorAll('#copyDlg select, #copyDlg input')) el.disabled = on;
+  $('#copyBrowse').disabled = on;
+}
+// Phone → PC through the helper, which also stamps each file with its capture time.
+async function runImport() {
+  const dest = $('#copyDest').value.trim().replace(/^"(.*)"$/, '$1');
+  if (!/^([a-z]:\\|\\\\[^\\]+\\)/i.test(dest)) { toast('请填写完整的目标文件夹路径（例如 D:\\照片\\iPhone），或点「浏览…」选择。', 6000); return; }
+  const layout = $('#copyLayout').value;
+  const live = document.querySelector('input[name=copyLive]:checked').value;
+  prefs.set('copyLayout', layout);
+  const items = [], owners = [];
+  for (const it of copyItems) for (const r of recsToCopy(it, live)) {
+    items.push({ id: r.file.id, rel: [...subdirs(it, layout), r.name].join('/'), size: r.size, ts: Math.round(it.ts) });
+    owners.push([it, r]);
+  }
+  let job;
+  try { job = await api('/api/import', { dev: state.source.dev, dest, items }); }
+  catch (e) {
+    if (e.code === 'nospace') toast(`目标磁盘空间不够：需要 ${fmtSize(e.data.need)}，只剩 ${fmtSize(e.data.free)}。`, 8000);
+    else if (e.code === 'dest') toast('无法使用这个文件夹' + (e.data.detail ? '：' + e.data.detail : '。'), 8000);
+    else toast('无法开始导入：' + deviceErr(e), 8000);
+    return;
+  }
+  prefs.set('lastDest', job.dest);
+  importJob = job.job;
+  $('#copyProg').hidden = false;
+  $('#copyGo').disabled = true;
+  $('#copyCancel').textContent = '停止';
+  copyLocked(true);
+  let s = null, misses = 0;
+  while (true) {
+    await new Promise(r => setTimeout(r, 400));
+    try { s = await api('/api/job?id=' + importJob); misses = 0; }
+    catch (e) { if (++misses > 10) { s = { state: 'error', error: e.code || e.message, done: 0, files: items.length, ok: [] }; break; } continue; }
+    $('#copyPbar').style.width = Math.round(s.bytes / (s.total || 1) * 100) + '%';
+    $('#copyPtxt').textContent = `${s.done} / ${s.files} 个文件 · ${fmtSize(s.bytes)} / ${fmtSize(s.total)}` + (s.skipped ? ` · 已存在跳过 ${s.skipped}` : '') + (s.failed ? ` · 失败 ${s.failed}` : '') + (s.current ? `\n正在导入 ${s.current}` : '');
+    if (s.state !== 'running') break;
+  }
+  importJob = null;
+  copyLocked(false);
+  $('#copyPtxt').style.whiteSpace = 'pre-line';
+  // Mark what is now on the PC.
+  state.imported ||= new Set();
+  for (const i of s.ok || []) state.imported.add(impKey(owners[i][1]));
+  markImported();
+  const top = $('#scroller').scrollTop;
+  renderGrid(); renderKinds(); renderDays();
+  $('#scroller').scrollTop = top;
+  $('#copyGo').hidden = true;
+  $('#copyCancel').textContent = '关闭';
+  $('#copyOpen').hidden = false;
+  $('#copyOpen').onclick = () => api('/api/reveal', { path: job.dest }).catch(() => {});
+  const okNew = (s.ok || []).length - s.skipped;
+  if (s.state === 'done') toast(`导入完成：${okNew} 个新文件` + (s.skipped ? `，${s.skipped} 个之前导入过、已跳过` : '') + (s.failed ? `，${s.failed} 个失败` : '') + ` → ${job.dest}`, 8000);
+  else if (s.state === 'cancelled') toast(`已停止：导入了 ${okNew} 个文件。再导入一次会自动跳过已导入的。`, 8000);
+  else toast(`导入中断：${deviceErr(s.error)} 已导入 ${okNew} 个，重新连接后再导入一次会自动跳过它们。`, 10000);
+  if (s.failed && s.errors?.length) console.warn('import errors', s.errors);
+}
+async function runCopy() {
+  const layout = $('#copyLayout').value;
+  const live = document.querySelector('input[name=copyLive]:checked').value;
+  prefs.set('copyLayout', layout);
+  let dest;
+  try { dest = await window.showDirectoryPicker({ id: 'photosift-dest', mode: 'readwrite' }); }
+  catch (e) { if (e.name !== 'AbortError') toast('无法使用这个文件夹：' + e.message); return; }
+  const jobs = [];
+  for (const it of copyItems) for (const r of recsToCopy(it, live)) jobs.push({ it, r });
+  const total = jobs.reduce((s, j) => s + j.r.size, 0) || 1;
+  let bytes = 0, done = 0, skipped = 0, failed = 0, raf = 0;
+  const paint = () => {
+    raf = 0;
+    $('#copyPbar').style.width = Math.round(bytes / total * 100) + '%';
+    $('#copyPtxt').textContent = `${done} / ${jobs.length} 个文件 · ${fmtSize(bytes)} / ${fmtSize(total)}` + (skipped ? ` · 跳过 ${skipped}` : '') + (failed ? ` · 失败 ${failed}` : '');
+  };
+  const update = () => { raf ||= requestAnimationFrame(paint); };
+  $('#copyProg').hidden = false;
+  $('#copyGo').disabled = true;
+  $('#copyCancel').textContent = '停止';
+  copyAbort = new AbortController();
+  const dirs = new Map();
+  const getDir = async parts => {
+    let h = dest, key = '';
+    for (const p of parts) {
+      key += '/' + p;
+      if (!dirs.has(key)) dirs.set(key, await h.getDirectoryHandle(p, { create: true }));
+      h = dirs.get(key);
+    }
+    return h;
+  };
+  const exists = async (dir, name) => { try { return await (await dir.getFileHandle(name)).getFile(); } catch { return null; } };
+  for (const { it, r } of jobs) {
+    if (copyAbort.signal.aborted) break;
+    try {
+      const dir = await getDir(subdirs(it, layout));
+      let name = r.name;
+      const ex = await exists(dir, name);
+      if (ex) {
+        if (ex.size === r.size) { skipped++; done++; bytes += r.size; update(); continue; }
+        for (let i = 1; await exists(dir, name); i++) name = `${r.base} (${i}).${r.ext}`;
+      }
+      const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+      const count = new TransformStream({ transform(chunk, ctl) { bytes += chunk.byteLength; update(); ctl.enqueue(chunk); } });
+      await r.file.stream().pipeThrough(count).pipeTo(w, { signal: copyAbort.signal });
+      done++;
+    } catch (e) {
+      if (copyAbort.signal.aborted) break;
+      failed++;
+      console.warn('copy failed', r.path, e);
+    }
+    update();
+  }
+  paint();
+  const stopped = copyAbort.signal.aborted;
+  copyAbort = null;
+  $('#copyCancel').textContent = '关闭';
+  toast(stopped ? `已停止：复制了 ${done} 个文件。` : `复制完成：${done - skipped} 个新文件` + (skipped ? `，${skipped} 个已存在被跳过` : '') + (failed ? `，${failed} 个失败` : '') + ` → ${dest.name}`, 6000);
+}
+function exportCSV(items) {
+  const rows = [['类型', '日期', '时间', '名称', '照片文件', '视频文件', '视频时长(秒)', '大小(MB)', '文件夹', '判定依据', '时间来源']];
+  const K = { live: '实况', video: '视频', photo: '照片' };
+  for (const it of items) rows.push([K[it.kind] + (it.orphan ? '(缺照片)' : it.embedded ? '(内嵌)' : ''), it.dayKey, fmtTime(it.ts), it.name, it.image?.name || '', it.video?.name || '', it.duration != null ? it.duration.toFixed(1) : '', (it.size / 1048576).toFixed(2), it.dir, it.reason, it.dateSrc]);
+  const csv = '﻿' + rows.map(r => r.map(c => /[",\r\n]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `${state.rootName || '媒体'}-清单.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ============================================================================
+// events
+// ============================================================================
+function setKind(k) { state.filter.kind = k; render(); $('#scroller').scrollTop = 0; }
+
+$('#btnOpen').onclick = pickFolder;
+$('#btnPhone').onclick = openDevices;
+$('#devRefresh').onclick = openDevices;
+$('#devClose').onclick = () => { $('#devDlg').hidden = true; };
+$('#btnRescan').onclick = () => {
+  if (state.source && state.lastDevice) scanDevice(state.lastDevice.d, state.lastDevice.roots);
+  else if (state.rootHandle) scanHandle(state.rootHandle);
+};
+$('#btnSide').onclick = () => $('#side').classList.toggle('open');
+$('#kinds').onclick = e => { const b = e.target.closest('.kind'); if (b) setKind(b.dataset.kind); };
+$('#btnAllDays').onclick = () => { state.filter.days.clear(); render(); };
+$('#dirInput').onchange = e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  const root = (files[0].webkitRelativePath || '').split('/')[0] || '所选文件';
+  const entries = [];
+  for (const f of files) {
+    const rel = f.webkitRelativePath || f.name;
+    const path = rel.includes('/') ? rel.slice(rel.indexOf('/') + 1) : rel;
+    if (path.split('/').slice(0, -1).some(seg => SKIP_DIR.test(seg))) continue;
+    entries.push({ name: f.name, path, file: f });
+  }
+  state.rootHandle = null;
+  ingest(entries, root, ++state.scanToken);
+};
+
+let qTimer;
+$('#q').oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.filter.q = e.target.value.trim().toLowerCase(); render(); }, 160); };
+$('#fDur').onchange = e => { state.filter.dur = e.target.value; render(); };
+$('#fSpecial').onchange = e => { state.filter.special = e.target.value; render(); };
+$('#fGroup').onchange = e => { state.group = e.target.value; prefs.set('group', state.group); render(); };
+$('#fSort').onchange = e => { state.sort = e.target.value; prefs.set('sort', state.sort); render(); };
+$('#fSize').oninput = e => { document.documentElement.style.setProperty('--thumb', e.target.value + 'px'); prefs.set('thumb', +e.target.value); };
+$('#btnSelAll').onclick = () => selectItems(state.view);
+$('#btnCsv').onclick = () => state.view.length ? exportCSV(state.view) : toast('当前列表是空的。');
+$('#btnCsvSel').onclick = () => exportCSV(state.view.filter(it => state.selected.has(it.id)).concat([...state.selected].map(id => state.byId.get(id)).filter(it => it && !state.view.includes(it))));
+$('#btnClearSel').onclick = clearSel;
+$('#btnCopy').onclick = () => openCopy([...state.selected].map(id => state.byId.get(id)).filter(Boolean));
+$('#copyGo').onclick = () => state.source ? runImport() : runCopy();
+$('#copyCancel').onclick = () => {
+  if (copyAbort) copyAbort.abort();
+  else if (importJob) { api('/api/job-cancel', { job: importJob }).catch(() => {}); $('#copyCancel').textContent = '正在停止…'; }
+  else $('#copyDlg').hidden = true;
+};
+$('#copyBrowse').onclick = async () => {
+  try {
+    const r = await api('/api/pick-folder', { initial: $('#copyDest').value.trim() });
+    if (r.path) $('#copyDest').value = r.path;
+  } catch (e) { toast(e.code === 'busy' ? '选择文件夹的窗口已经打开了（可能在浏览器后面）。' : '无法打开选择窗口：' + deviceErr(e)); }
+};
+
+$('#dayList').onclick = e => {
+  const f = state.filter.days;
+  const m = e.target.closest('.month');
+  if (m) {
+    const ks = state.visibleDays.filter(k => k.startsWith(m.dataset.month));
+    const allOn = ks.every(k => f.has(k));
+    if (!(e.ctrlKey || e.metaKey)) f.clear();
+    for (const k of ks) allOn && (e.ctrlKey || e.metaKey) ? f.delete(k) : f.add(k);
+    if (allOn && !(e.ctrlKey || e.metaKey) && f.size === ks.length) f.clear();
+    render(); $('#scroller').scrollTop = 0;
+    return;
+  }
+  const d = e.target.closest('.day');
+  if (!d) return;
+  const k = d.dataset.day;
+  if (e.ctrlKey || e.metaKey) f.has(k) ? f.delete(k) : f.add(k);
+  else if (e.shiftKey && state.lastDay) {
+    const vd = state.visibleDays;
+    let a = vd.indexOf(state.lastDay), b = vd.indexOf(k);
+    if (a > b) [a, b] = [b, a];
+    if (a >= 0) for (let i = a; i <= b; i++) f.add(vd[i]);
+  } else if (f.size === 1 && f.has(k)) f.clear();
+  else { f.clear(); f.add(k); }
+  state.lastDay = k;
+  render();
+  $('#scroller').scrollTop = 0;
+  if (window.innerWidth <= 900) $('#side').classList.remove('open');
+};
+
+const sc = $('#scroller');
+sc.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]');
+  if (act) {
+    if (act.dataset.act === 'open') pickFolder();
+    else if (act.dataset.act === 'phone') openDevices();
+    else if (act.dataset.act === 'reset') {
+      Object.assign(state.filter, { kind: 'all', q: '', dur: 'all', special: 'all' });
+      state.filter.days.clear();
+      $('#q').value = ''; $('#fDur').value = 'all'; $('#fSpecial').value = 'all';
+      render();
+    }
+    return;
+  }
+  const g = e.target.closest('.selgrp');
+  if (g) { const grp = state.groups.find(x => x.key === g.dataset.key); if (grp) selectItems(grp.items); return; }
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const id = +card.dataset.id;
+  if (e.shiftKey && state.lastClicked != null) {
+    const ids = state.view.map(i => i.id);
+    let a = ids.indexOf(state.lastClicked), b = ids.indexOf(id);
+    if (a > b) [a, b] = [b, a];
+    if (a >= 0) for (let i = a; i <= b; i++) setSel(ids[i], true);
+  } else if (e.target.closest('.check') || e.ctrlKey || e.metaKey || state.selected.size) {
+    setSel(id, !state.selected.has(id));
+  } else {
+    openViewer(id);
+    return;
+  }
+  state.lastClicked = id;
+  renderSelbar();
+});
+sc.addEventListener('dblclick', e => {
+  const card = e.target.closest('.card');
+  if (card && !e.target.closest('.check')) { window.getSelection()?.removeAllRanges(); openViewer(+card.dataset.id); }
+});
+sc.addEventListener('pointerover', e => {
+  const card = e.target.closest('.card');
+  if (!card || hover?.card === card) return;
+  clearTimeout(hoverTimer);
+  const it = state.byId.get(+card.dataset.id);
+  if (!it || it.noPlay || !(it.video || it.embedded)) return;
+  hoverTimer = setTimeout(() => startHover(card, it), 250);
+});
+sc.addEventListener('pointerout', e => {
+  const card = e.target.closest('.card');
+  if (card && !card.contains(e.relatedTarget)) { clearTimeout(hoverTimer); if (hover?.card === card) stopHover(); }
+});
+
+$('#vClose').onclick = closeViewer;
+$('#vPrev').onclick = () => stepViewer(-1);
+$('#vNext').onclick = () => stepViewer(1);
+$('#vTabs').onclick = e => { const b = e.target.closest('button[data-mode]'); if (b && !b.disabled) { V.mode = b.dataset.mode; showViewer(); } };
+$('#vInfo').onclick = e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const it = state.view[V.idx];
+  if (b.dataset.act === 'vsel') { setSel(it.id, !state.selected.has(it.id)); renderSelbar(); renderInfo(it); }
+  else if (b.dataset.act === 'vpath') {
+    const txt = [it.image, it.video].filter(Boolean).map(fullPath).join('\n');
+    navigator.clipboard?.writeText(txt).then(() => toast('已复制路径'), () => toast(txt));
+  }
+};
+
+document.addEventListener('keydown', e => {
+  if (!$('#viewer').hidden) {
+    const it = state.view[V.idx];
+    if (e.key === 'Escape') closeViewer();
+    else if (e.key === 'ArrowLeft') stepViewer(-1);
+    else if (e.key === 'ArrowRight') stepViewer(1);
+    else if (e.key === ' ' && it && e.target.tagName !== 'VIDEO') { e.preventDefault(); setSel(it.id, !state.selected.has(it.id)); renderSelbar(); renderInfo(it); }
+    else if ((e.key === 'l' || e.key === 'L') && it?.kind === 'live' && it.image) { V.mode = V.mode === 'photo' ? 'motion' : 'photo'; showViewer(); }
+    return;
+  }
+  if (!$('#copyDlg').hidden) { if (e.key === 'Escape' && !copyAbort && !importJob) $('#copyDlg').hidden = true; return; }
+  if (!$('#devDlg').hidden) { if (e.key === 'Escape') $('#devDlg').hidden = true; return; }
+  if (e.target.matches('input, select, textarea')) { if (e.key === 'Escape') e.target.blur(); return; }
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key.toLowerCase() === 'a' && state.view.length) { e.preventDefault(); for (const it of state.view) setSel(it.id, true); renderSelbar(); }
+    return;
+  }
+  if (e.altKey) return;
+  const k = { 1: 'all', 2: 'live', 3: 'video', 4: 'photo' }[e.key];
+  if (k) setKind(k);
+  else if (e.key === '/') { e.preventDefault(); $('#q').focus(); }
+  else if (e.key === 'Escape') clearSel();
+});
+
+// drag & drop a folder anywhere
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+document.addEventListener('dragenter', e => { if (hasFiles(e)) { dragDepth++; $('#dropov').hidden = false; } });
+document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#dropov').hidden = true; } });
+document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+document.addEventListener('drop', async e => {
+  e.preventDefault();
+  dragDepth = 0; $('#dropov').hidden = true;
+  const items = [...e.dataTransfer.items].filter(i => i.kind === 'file');
+  if (!items.length) return;
+  // Both lookups must start synchronously, before the DataTransfer is cleared.
+  const handleP = items.map(i => i.getAsFileSystemHandle?.() ?? null);
+  const entries = items.map(i => i.webkitGetAsEntry?.() ?? null);
+  const token = ++state.scanToken;
+  setProgress('正在读取文件列表…');
+  try {
+    const handles = handleP.every(Boolean) ? (await Promise.all(handleP)).filter(Boolean) : null;
+    if (handles?.length === 1 && handles[0].kind === 'directory') { idb.set('lastRoot', handles[0]); return scanHandle(handles[0]); }
+    const out = [];
+    if (handles?.length) {
+      for (const h of handles) h.kind === 'directory' ? await walkHandle(h, h.name + '/', out, token) : out.push({ name: h.name, path: h.name, handle: h });
+    } else {
+      const ents = entries.filter(Boolean);
+      if (ents.length === 1 && ents[0].isDirectory) {
+        const reader = ents[0].createReader();
+        for (;;) { const batch = await new Promise((res, rej) => reader.readEntries(res, rej)); if (!batch.length) break; for (const ch of batch) await walkEntry(ch, '', out); }
+        state.rootHandle = null;
+        return ingest(out, ents[0].name, token);
+      }
+      for (const en of ents) await walkEntry(en, '', out);
+    }
+    state.rootHandle = null;
+    ingest(out, `拖入的 ${items.length} 项`, token);
+  } catch (err) { setProgress(null); toast('读取拖入的内容失败：' + err.message); }
+});
+
+// restore preferences
+state.sort = prefs.get('sort', 'time-desc');
+state.group = prefs.get('group', 'day');
+$('#fSort').value = state.sort;
+$('#fGroup').value = state.group;
+const ts0 = prefs.get('thumb', 168);
+$('#fSize').value = ts0;
+document.documentElement.style.setProperty('--thumb', ts0 + 'px');
+render();
+if (HELPER) {
+  api('/api/ping').then(r => { helperInfo = r; }).catch(() => {});
+  if (location.hash === '#phone') openDevices();
+}
+
+// hook for automated tests: PhotoSift.ingest([{name, path, file}], rootName)
+window.PhotoSift = { ingest: (entries, root) => ingest(entries, root, ++state.scanToken), state };
+})();
+</script>
+</body>
+</html>
