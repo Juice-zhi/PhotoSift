@@ -44,7 +44,7 @@
 - Windows 10 或 11。系统自带的 .NET Framework 4 就够了，不用另外安装任何东西。
 - 最新版 Chrome 或 Edge。
 
-1. **下载**：在本页点 **Code → Download ZIP**，或者在 [Releases](../../releases) 里下载，然后解压到任意文件夹。
+1. **下载**：在本页点 **Code → Download ZIP**，或者在 [Releases](https://github.com/Juice-zhi/PhotoSift/releases) 里下载，然后解压到任意文件夹。
 2. **设置 iPhone（推荐）**：打开 **设置 → 照片 → 传输到 Mac 或 PC**，选「**保留原片**」。这样不用转格式，读取更快，实况的配对信息也更完整。
 3. **连接手机**：用数据线连上电脑，然后**解锁手机**。iPhone 第一次连接会问要不要信任这台电脑，点「信任」；安卓手机把 USB 用途改成「传输文件」。
 4. **启动**：双击 **`启动 PhotoSift.cmd`**。
@@ -87,7 +87,7 @@
 
 ## 状态
 
-PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更多真 iPhone 和安卓手机的测试。遇到分类不对、读不到或报错的情况，欢迎提 [Issue](../../issues)，最好附上手机型号和系统版本。
+PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更多真 iPhone 和安卓手机的测试。遇到分类不对、读不到或报错的情况，欢迎提 [Issue](https://github.com/Juice-zhi/PhotoSift/issues)，最好附上手机型号和系统版本。
 
 ## License
 
