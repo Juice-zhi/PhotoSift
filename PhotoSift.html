@@ -544,6 +544,7 @@ function deviceErr(e) {
   if (c === 'gone') return '手机连接断开了。请插好数据线、解锁手机后再试。';
   if (c === 'denied') return '手机拒绝了访问。请解锁手机，并在手机上点「信任」/「允许」。';
   if (c === 'busy') return '手机正忙，可能有别的程序（如「照片」应用、资源管理器）在读取手机。请关掉它们后再试。';
+  if (c === 'outofstep') return '手机传输错位了：读到的是上一个文件的内容，为了不把文件弄混已经停下。请拔掉数据线、解锁手机后重新插上，再点「连接手机」重新读取。';
   if (c === 'Failed to fetch') return '连不上 PhotoSift 助手，它的窗口可能被关掉了。请重新双击「启动 PhotoSift.cmd」。';
   return String(c);
 }
@@ -564,15 +565,28 @@ class DevFile {
     if (!this.size) return new ArrayBuffer(0);
     await devIdle();
     const r = await fetch(this.base, { headers: { Range: `bytes=${this.off}-${this.off + this.size - 1}` } });
-    if (!r.ok) throw new Error(r.status === 503 ? 'gone' : 'HTTP ' + r.status);
+    if (!r.ok) {
+      const code = await r.json().then(j => j.error, () => null);
+      if (code === 'outofstep') outOfStep();
+      throw new Error(code === 'outofstep' || code === 'toobig' ? code : r.status === 503 ? 'gone' : 'HTTP ' + r.status);
+    }
     return r.arrayBuffer();
   }
   async blob() { return new Blob([await this.arrayBuffer()], { type: this.type }); }
 }
 const isDev = f => f instanceof DevFile;
 // A phone serves one file at a time, so background reads (metadata, thumbnails) wait while an import runs.
-let devGate = null;
-async function devIdle() { while (devGate) await devGate.p; }
+let devGate = null, devBroken = false;
+async function devIdle() {
+  while (devGate) await devGate.p;
+  if (devBroken) throw new Error('outofstep');
+}
+// The helper saw the phone hand over the wrong file: stop reading it until it is plugged in again and rescanned.
+function outOfStep() {
+  if (devBroken) return;
+  devBroken = true;
+  toast(deviceErr('outofstep'), 20000);
+}
 function holdDevice() { let open; devGate = { p: new Promise(r => open = r) }; return () => { devGate = null; open(); }; }
 // Something a <video>/<img> can load: phone files stream from the helper, local files become blob: URLs.
 function srcOf(f) {
@@ -1259,6 +1273,7 @@ async function openDevice(d) {
 }
 async function scanDevice(d, roots) {
   const token = ++state.scanToken;
+  devBroken = false;
   state.rootHandle = null;
   state.lastDevice = { d, roots };
   setProgress(`正在读取「${d.name}」的文件列表…`);
@@ -1891,6 +1906,7 @@ function copyLocked(on) {
 async function runImport() {
   const dest = $('#copyDest').value.trim().replace(/^"(.*)"$/, '$1');
   if (!/^([a-z]:\\|\\\\[^\\]+\\)/i.test(dest)) { toast('请填写完整的目标文件夹路径（例如 D:\\照片\\iPhone），或点「浏览…」选择。', 6000); return; }
+  if (devBroken) { toast(deviceErr('outofstep'), 12000); return; }
   const layout = $('#copyLayout').value;
   const live = document.querySelector('input[name=copyLive]:checked').value;
   prefs.set('copyLayout', layout);
@@ -1926,6 +1942,7 @@ async function runImport() {
   }
   importJob = null;
   release();
+  if (s.error === 'outofstep') devBroken = true;
   copyLocked(false);
   $('#copyPtxt').style.whiteSpace = 'pre-line';
   if (s.failed && s.errors?.length) $('#copyPtxt').textContent += '\n失败的文件：\n' + s.errors.slice(0, 5).join('\n') + (s.errors.length > 5 ? '\n…' : '');

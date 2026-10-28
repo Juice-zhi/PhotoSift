@@ -135,6 +135,12 @@ namespace PhotoSift
         public long Size, Created, Modified;   // dates: wall-clock ms ("naive local", like PhotoSift.html)
     }
 
+    // The phone handed over the previously requested file instead of the one asked for (see WpdBackend).
+    public class OutOfStepException : Exception
+    {
+        public OutOfStepException() : base("手机传输错位：收到的是上一个文件的内容。请拔掉数据线、解锁手机后重新插上。") { }
+    }
+
     public interface IBackend
     {
         string Root { get; }
@@ -143,6 +149,7 @@ namespace PhotoSift
         ObjInfo Info(string id);
         int Read(string id, long offset, byte[] buf, int count);   // 0 = end of file
         byte[] Thumb(string id);                                   // null when the device has none
+        void Finish();                                             // done with the file just read: complete its transfer now
         void Close();
     }
 
@@ -163,7 +170,8 @@ namespace PhotoSift
         // IPortableDevice::Cancel) can knock the phone out of step: later streams then deliver the previous
         // file's bytes. So on such a phone every stream is read to its end, and Dev never starts a partial
         // read of a file too big to finish (STREAM_MAX). Errors from a phone that is busy or recovering are retried.
-        class OpenStream { public string Id; public ComIStream S; public long Pos, Size; }
+        // A phone that is out of step anyway (another program cut a transfer short) is caught by Check().
+        class OpenStream { public string Id; public ComIStream S; public long Pos, Size, PrevSize; }
         public const long STREAM_MAX = 64L << 20;
         const long DRAIN_MAX = 8L << 20, SKIP_CHEAP = 1L << 20;
 
@@ -175,6 +183,7 @@ namespace PhotoSift
         readonly IntPtr pRead = Marshal.AllocHGlobal(8);
         readonly byte[] tmp = new byte[1 << 20];
         OpenStream cur;
+        long lastSize = -1;   // listed size of the file requested most recently
         bool? canSeek;
 
         public string Root { get { return "DEVICE"; } }
@@ -303,7 +312,7 @@ namespace PhotoSift
             {
                 o.S.Read(tmp, Math.Min(count - total, tmp.Length), pRead);
                 int n = Marshal.ReadInt32(pRead);
-                if (n <= 0) break;
+                if (n <= 0) { Check(o); break; }
                 Buffer.BlockCopy(tmp, 0, buf, total, n);
                 total += n;
                 o.Pos += n;
@@ -327,9 +336,10 @@ namespace PhotoSift
                 uint opt = 0;
                 ComIStream s;
                 PropKey key = R_DEFAULT;
-                long size = Info(id).Size;
+                long size = Info(id).Size, prev = lastSize;
+                lastSize = size;   // the phone counts the request even if it then fails
                 res.GetStream(id, ref key, 0, ref opt, out s);
-                cur = new OpenStream { Id = id, S = s, Size = size };
+                cur = new OpenStream { Id = id, S = s, Size = size, PrevSize = prev };
                 if (offset > 0 && (offset <= SKIP_CHEAP || canSeek == false || !TrySeek(cur, offset))) Skip(cur, offset);
             }
             return cur;
@@ -347,31 +357,41 @@ namespace PhotoSift
             {
                 o.S.Read(tmp, (int)Math.Min(tmp.Length, offset - o.Pos), pRead);
                 int n = Marshal.ReadInt32(pRead);
-                if (n <= 0) break;
+                if (n <= 0) { Check(o); break; }
                 o.Pos += n;
             }
+        }
+        // At the end of a stream: a phone out of step hands each stream the file requested before it, so a
+        // transfer that ends at exactly the previous file's size instead of its own is not this file.
+        void Check(OpenStream o)
+        {
+            if (o.Pos != o.Size && o.PrevSize > 0 && o.Pos == o.PrevSize) throw new OutOfStepException();
         }
         // Close the open stream. On a phone that cannot seek, read it to the very end first (until Read returns
         // nothing, not just to the listed size) so the transfer completes; elsewhere only short leftovers are read.
         void End()
         {
-            if (cur == null) return;
-            long left = cur.Size - cur.Pos;
-            if (canSeek == false || left <= DRAIN_MAX)
+            OpenStream o = cur;
+            if (o == null) return;
+            try
             {
-                try
+                long left = o.Size - o.Pos;
+                if (canSeek == false || left <= DRAIN_MAX)
                 {
-                    long limit = Math.Max(left, 0) + DRAIN_MAX;
-                    for (long n = 1; n > 0 && limit > 0; limit -= n)
+                    long limit = o.Pos + Math.Max(left, 0) + DRAIN_MAX;
+                    while (o.Pos < limit)
                     {
-                        cur.S.Read(tmp, tmp.Length, pRead);
-                        n = Marshal.ReadInt32(pRead);
+                        o.S.Read(tmp, tmp.Length, pRead);
+                        int n = Marshal.ReadInt32(pRead);
+                        if (n <= 0) { Check(o); break; }
+                        o.Pos += n;
                     }
                 }
-                catch { }
             }
-            Abandon();
+            catch (COMException) { }
+            finally { Abandon(); }
         }
+        public void Finish() { End(); }
         void Abandon()
         {
             if (cur == null) return;
@@ -403,7 +423,7 @@ namespace PhotoSift
 
         public void Close()
         {
-            End();
+            try { End(); } catch { }
             try { dev.Close(); } catch { }
             Marshal.ReleaseComObject(dev);
         }
@@ -449,6 +469,7 @@ namespace PhotoSift
             string t = Path.Combine(root + "_thumbs", id + ".jpg");
             return File.Exists(t) ? File.ReadAllBytes(t) : null;
         }
+        public void Finish() { }
         public void Close() { }
     }
 
@@ -525,6 +546,7 @@ namespace PhotoSift
                 int len = whole ? (int)size : size > start ? (int)Math.Max(count, Math.Min(CHUNK, size - start)) : count;
                 var buf = new byte[len];
                 int n = B.Read(id, at, buf, len);
+                if (whole) B.Finish();   // checks the transfer before anything is cached
                 if (n < len) Array.Resize(ref buf, n);
                 cache.Add(new Chunk { Id = id, Start = at, Data = buf, Used = ++tick });
                 cacheBytes += n;
@@ -689,7 +711,7 @@ namespace PhotoSift
                             catch (Exception e) { err = e; }
                             if (err == null && got == it.Size) break;
                             if (Cancel) break;
-                            if (err != null && Server.IsGone(err)) throw err;
+                            if (err != null && (Server.IsGone(err) || err is OutOfStepException)) throw err;
                             lock (this) Bytes -= got;
                             if (attempt >= 3)
                             {
@@ -720,6 +742,7 @@ namespace PhotoSift
                         if (Errors.Count < 50) Errors.Add(it.Rel + ": " + e.Message);
                     }
                     if (Server.IsGone(e)) { Devices.Drop(dev.Id); lock (this) Error = "gone"; break; }
+                    if (e is OutOfStepException) { Devices.Drop(dev.Id); lock (this) Error = "outofstep"; break; }
                 }
                 finally
                 {
@@ -989,9 +1012,9 @@ namespace PhotoSift
             catch (Exception e)
             {
                 if (e is HttpListenerException || e is ObjectDisposedException) return;   // browser went away mid-response
-                string code = IsGone(e) ? "gone" : IsDenied(e) ? "denied" : IsTransient(e) ? "busy" : e.Message;
+                string code = IsGone(e) ? "gone" : IsDenied(e) ? "denied" : IsTransient(e) ? "busy" : e is OutOfStepException ? "outofstep" : e.Message;
                 string dev = q.QueryString["dev"];
-                if (code == "gone" && dev != null) Devices.Drop(dev);
+                if ((code == "gone" || code == "outofstep") && dev != null) Devices.Drop(dev);
                 try { Send(r, code == "gone" ? 503 : 500, Err(code)); } catch { }
             }
             finally { try { r.Close(); } catch { } }
