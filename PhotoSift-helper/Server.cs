@@ -138,6 +138,7 @@ namespace PhotoSift
     public interface IBackend
     {
         string Root { get; }
+        bool CanSeek { get; }                                      // false: reaching an offset means reading up to it
         List<string> Children(string id);
         ObjInfo Info(string id);
         int Read(string id, long offset, byte[] buf, int count);   // 0 = end of file
@@ -157,19 +158,27 @@ namespace PhotoSift
             F_ASSOCIATION = new Guid("30010000-ae6c-4804-98ba-c57b46965fe7");
         static readonly DateTime Epoch = new DateTime(1970, 1, 1);
 
-        class OpenStream { public string Id; public ComIStream S; public long Pos, Used; }
+        // Phones (MTP/PTP) serve one file transfer at a time. On an iPhone a second open stream fails with
+        // "busy" and IStream::Seek is E_NOTIMPL. Worse, a transfer cut short (stream released early, or
+        // IPortableDevice::Cancel) can knock the phone out of step: later streams then deliver the previous
+        // file's bytes. So on such a phone every stream is read to its end, and Dev never starts a partial
+        // read of a file too big to finish (STREAM_MAX). Errors from a phone that is busy or recovering are retried.
+        class OpenStream { public string Id; public ComIStream S; public long Pos, Size; }
+        public const long STREAM_MAX = 64L << 20;
+        const long DRAIN_MAX = 8L << 20, SKIP_CHEAP = 1L << 20;
 
         readonly IPortableDevice dev;
         readonly IPortableDeviceProperties props;
         readonly IPortableDeviceResources res;
         readonly IPortableDeviceContent content;
         readonly IPortableDeviceKeyCollection keys;
-        readonly List<OpenStream> streams = new List<OpenStream>();
         readonly IntPtr pRead = Marshal.AllocHGlobal(8);
         readonly byte[] tmp = new byte[1 << 20];
-        long tick;
+        OpenStream cur;
+        bool? canSeek;
 
         public string Root { get { return "DEVICE"; } }
+        public bool CanSeek { get { return canSeek != false; } }
 
         public WpdBackend(string pnpId)
         {
@@ -183,6 +192,7 @@ namespace PhotoSift
             object d;
             try { d = new PortableDeviceFTMClass(); } catch (COMException) { d = new PortableDeviceClass(); }
             dev = (IPortableDevice)d;
+            if (pnpId.IndexOf("vid_05ac", StringComparison.OrdinalIgnoreCase) >= 0) canSeek = false;   // Apple: don't even try
             dev.Open(pnpId, info);
             dev.Content(out content);
             content.Properties(out props);
@@ -274,6 +284,19 @@ namespace PhotoSift
 
         public int Read(string id, long offset, byte[] buf, int count)
         {
+            for (int attempt = 0; ; attempt++)
+            {
+                try { return ReadOnce(id, offset, buf, count); }
+                catch (COMException e)
+                {
+                    if (!Server.IsTransient(e) || attempt >= 4) throw;
+                    Abandon();
+                    Thread.Sleep(attempt == 0 ? 20 : 100 << attempt);
+                }
+            }
+        }
+        int ReadOnce(string id, long offset, byte[] buf, int count)
+        {
             OpenStream o = StreamAt(id, offset);
             int total = 0;
             while (total < count)
@@ -288,42 +311,38 @@ namespace PhotoSift
             return total;
         }
 
-        // Keep a few streams open so sequential reads (copying, video playback) don't reopen each time.
+        // Sequential reads (copying, video playback) continue the open stream; anything else ends it first.
         OpenStream StreamAt(string id, long offset)
         {
-            OpenStream best = null;
-            foreach (var s in streams) if (s.Id == id && (best == null || s.Pos == offset)) best = s;
-            if (best != null && best.Pos != offset)
+            if (cur != null && cur.Id == id && cur.Pos != offset)
             {
-                try { best.S.Seek(offset, 0, IntPtr.Zero); best.Pos = offset; }
-                catch { if (offset > best.Pos) Skip(best, offset); else { Drop(best); best = null; } }
+                if (offset > cur.Pos && offset - cur.Pos <= SKIP_CHEAP) Skip(cur, offset);
+                else if (canSeek != false && TrySeek(cur, offset)) { }
+                else if (offset > cur.Pos) Skip(cur, offset);
+                else End();   // backwards without seeking: start over
             }
-            if (best == null)
+            if (cur != null && cur.Id != id) End();
+            if (cur == null)
             {
                 uint opt = 0;
                 ComIStream s;
                 PropKey key = R_DEFAULT;
+                long size = Info(id).Size;
                 res.GetStream(id, ref key, 0, ref opt, out s);
-                best = new OpenStream { Id = id, S = s };
-                streams.Add(best);
-                if (offset > 0)
-                {
-                    try { s.Seek(offset, 0, IntPtr.Zero); best.Pos = offset; } catch { Skip(best, offset); }
-                }
+                cur = new OpenStream { Id = id, S = s, Size = size };
+                if (offset > 0 && (offset <= SKIP_CHEAP || canSeek == false || !TrySeek(cur, offset))) Skip(cur, offset);
             }
-            best.Used = ++tick;
-            while (streams.Count > 6)
-            {
-                OpenStream old = null;
-                foreach (var s in streams) if (s != best && (old == null || s.Used < old.Used)) old = s;
-                Drop(old);
-            }
-            return best;
+            return cur;
+        }
+        bool TrySeek(OpenStream o, long offset)
+        {
+            try { o.S.Seek(offset, 0, IntPtr.Zero); o.Pos = offset; canSeek = true; return true; }
+            catch { canSeek = false; return false; }
         }
         // Devices that cannot seek: read forward and throw the bytes away (only for short distances).
         void Skip(OpenStream o, long offset)
         {
-            if (offset - o.Pos > (64L << 20)) throw new NotSupportedException("noseek");
+            if (offset - o.Pos > STREAM_MAX) throw new NotSupportedException("noseek");
             while (o.Pos < offset)
             {
                 o.S.Read(tmp, (int)Math.Min(tmp.Length, offset - o.Pos), pRead);
@@ -332,10 +351,32 @@ namespace PhotoSift
                 o.Pos += n;
             }
         }
-        void Drop(OpenStream o)
+        // Close the open stream. On a phone that cannot seek, read it to the very end first (until Read returns
+        // nothing, not just to the listed size) so the transfer completes; elsewhere only short leftovers are read.
+        void End()
         {
-            streams.Remove(o);
-            try { Marshal.ReleaseComObject(o.S); } catch { }
+            if (cur == null) return;
+            long left = cur.Size - cur.Pos;
+            if (canSeek == false || left <= DRAIN_MAX)
+            {
+                try
+                {
+                    long limit = Math.Max(left, 0) + DRAIN_MAX;
+                    for (long n = 1; n > 0 && limit > 0; limit -= n)
+                    {
+                        cur.S.Read(tmp, tmp.Length, pRead);
+                        n = Marshal.ReadInt32(pRead);
+                    }
+                }
+                catch { }
+            }
+            Abandon();
+        }
+        void Abandon()
+        {
+            if (cur == null) return;
+            try { Marshal.ReleaseComObject(cur.S); } catch { }
+            cur = null;
         }
 
         public byte[] Thumb(string id)
@@ -362,7 +403,7 @@ namespace PhotoSift
 
         public void Close()
         {
-            foreach (var s in streams.ToArray()) Drop(s);
+            End();
             try { dev.Close(); } catch { }
             Marshal.ReleaseComObject(dev);
         }
@@ -376,6 +417,7 @@ namespace PhotoSift
         static readonly DateTime Epoch = new DateTime(1970, 1, 1);
         public FolderBackend(string dir) { root = Path.GetFullPath(dir).TrimEnd('\\'); }
         public string Root { get { return ""; } }
+        public bool CanSeek { get { return true; } }
         string Full(string id) { return id.Length == 0 ? root : Path.Combine(root, id); }
         public List<string> Children(string id)
         {
@@ -422,7 +464,7 @@ namespace PhotoSift
         class Chunk { public string Id; public long Start; public byte[] Data; public long Used; }
         readonly List<Chunk> cache = new List<Chunk>();
         long cacheBytes, tick;
-        const int SMALL = 256 * 1024, CHUNK = 64 * 1024;
+        const int SMALL = 256 * 1024, CHUNK = 64 * 1024, WHOLE_MAX = 8 << 20;
         const long CACHE_MAX = 48L << 20;
 
         public Dev(string id, IBackend b) { Id = id; B = b; }
@@ -448,7 +490,9 @@ namespace PhotoSift
         public void Pipe(string id, long start, long count, Stream sink)
         {
             if (count <= 0) return;
-            if (count <= SMALL)
+            // A partial read of a big file on a phone that cannot seek would have to be cut short (see WpdBackend).
+            if (!B.CanSeek && Info(id).Size > WpdBackend.STREAM_MAX) throw new NotSupportedException("toobig");
+            if (count <= SMALL || Whole(id))
             {
                 byte[] data = Small(id, start, (int)count);
                 sink.Write(data, 0, data.Length);
@@ -476,11 +520,13 @@ namespace PhotoSift
                     return Slice(c.Data, (int)(start - c.Start), count);
                 }
                 long size = Info(id).Size;
-                int len = size > start ? (int)Math.Max(count, Math.Min(CHUNK, size - start)) : count;
+                bool whole = Whole(id);
+                long at = whole ? 0 : start;
+                int len = whole ? (int)size : size > start ? (int)Math.Max(count, Math.Min(CHUNK, size - start)) : count;
                 var buf = new byte[len];
-                int n = B.Read(id, start, buf, len);
+                int n = B.Read(id, at, buf, len);
                 if (n < len) Array.Resize(ref buf, n);
-                cache.Add(new Chunk { Id = id, Start = start, Data = buf, Used = ++tick });
+                cache.Add(new Chunk { Id = id, Start = at, Data = buf, Used = ++tick });
                 cacheBytes += n;
                 while (cacheBytes > CACHE_MAX && cache.Count > 1)
                 {
@@ -489,8 +535,17 @@ namespace PhotoSift
                     cache.Remove(old);
                     cacheBytes -= old.Data.Length;
                 }
-                return Slice(buf, 0, Math.Min(count, n));
+                int from = (int)Math.Min(start - at, n);
+                return Slice(buf, from, Math.Min(count, n - from));
             }
+        }
+        // On a phone that cannot seek, every partial read costs a whole transfer anyway, so small files
+        // (photos, Live Photo clips) are read once in full and served from memory.
+        bool Whole(string id)
+        {
+            if (B.CanSeek) return false;
+            long size = Info(id).Size;
+            return size > 0 && size <= WHOLE_MAX;
         }
         static byte[] Slice(byte[] a, int off, int n)
         {
@@ -623,19 +678,29 @@ namespace PhotoSift
                     }
                     string final = FreeName(target);
                     part = final + ".part";
-                    using (var fs = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+                    // Hold the phone for the whole file: reading another file in between would cut this transfer short.
+                    lock (dev.Sync)
                     {
-                        while (!Cancel)
+                        for (int attempt = 1; ; attempt++)
                         {
-                            int n = dev.Read(it.Id, got, buf, buf.Length);
-                            if (n <= 0) break;
-                            fs.Write(buf, 0, n);
-                            got += n;
-                            lock (this) Bytes += n;
+                            Exception err = null;
+                            got = 0;
+                            try { CopyTo(dev, it.Id, part, buf, ref got); }
+                            catch (Exception e) { err = e; }
+                            if (err == null && got == it.Size) break;
+                            if (Cancel) break;
+                            if (err != null && Server.IsGone(err)) throw err;
+                            lock (this) Bytes -= got;
+                            if (attempt >= 3)
+                            {
+                                if (err != null) { got = 0; throw err; }
+                                string msg = "大小不符：收到 " + got + " 字节，手机上是 " + it.Size + " 字节。iPhone 请在 设置 → 照片 → 传输到 Mac 或 PC 选「保留原片」。";
+                                got = 0;
+                                throw new IOException(msg);
+                            }
                         }
                     }
-                    if (Cancel) break;
-                    if (got == 0 && it.Size > 0) throw new IOException("the device returned no data");
+                    if (got != it.Size) break;   // stopped mid-file
                     File.Move(part, final);
                     part = null;
                     if (it.Ts > 0)
@@ -645,7 +710,7 @@ namespace PhotoSift
                         File.SetLastWriteTime(final, t);
                     }
                     written[final] = true;
-                    lock (this) { Done++; Ok.Add(i); if (got != it.Size) Bytes += it.Size - got; }
+                    lock (this) { Done++; Ok.Add(i); }
                 }
                 catch (Exception e)
                 {
@@ -662,6 +727,24 @@ namespace PhotoSift
                 }
             }
             lock (this) { State = Cancel ? "cancelled" : Error != null ? "error" : "done"; Current = null; }
+        }
+
+        // Reads the file to the end. A phone that cannot seek must not have a transfer cut short, so there a
+        // stop request takes effect after the current file.
+        void CopyTo(Dev dev, string id, string part, byte[] buf, ref long got)
+        {
+            bool finish = !dev.B.CanSeek;
+            using (var fs = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+            {
+                while (!Cancel || finish)
+                {
+                    int n = dev.Read(id, got, buf, buf.Length);
+                    if (n <= 0) break;
+                    fs.Write(buf, 0, n);
+                    got += n;
+                    lock (this) Bytes += n;
+                }
+            }
         }
 
         static string SafeJoin(string dest, string rel)
@@ -906,7 +989,7 @@ namespace PhotoSift
             catch (Exception e)
             {
                 if (e is HttpListenerException || e is ObjectDisposedException) return;   // browser went away mid-response
-                string code = IsGone(e) ? "gone" : IsDenied(e) ? "denied" : e.Message;
+                string code = IsGone(e) ? "gone" : IsDenied(e) ? "denied" : IsTransient(e) ? "busy" : e.Message;
                 string dev = q.QueryString["dev"];
                 if (code == "gone" && dev != null) Devices.Drop(dev);
                 try { Send(r, code == "gone" ? 503 : 500, Err(code)); } catch { }
@@ -922,6 +1005,21 @@ namespace PhotoSift
             {
                 case 0x8007001F: case 0x80070015: case 0x8007048F: case 0x800701B1: case 0x80070079:
                 case 0x800706BA: case 0x80070006: case 0x80070037: case 0x802A0006:
+                    return true;
+            }
+            return false;
+        }
+        // The phone is busy with another transfer, or still recovering from one that was cut short.
+        public static bool IsTransient(Exception e)
+        {
+            var ce = e as COMException;
+            if (ce == null) return false;
+            switch ((uint)ce.ErrorCode)
+            {
+                case 0x800700AA:   // ERROR_BUSY
+                case 0x8007001E:   // ERROR_READ_FAULT
+                case 0x80042007:   // PTP Incomplete_Transfer
+                case 0x80042019:   // PTP Device_Busy
                     return true;
             }
             return false;

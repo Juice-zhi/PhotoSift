@@ -87,7 +87,13 @@
 
 ## 状态
 
-PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更多真 iPhone 和安卓手机的测试。遇到分类不对、读不到或报错的情况，欢迎提 [Issue](https://github.com/Juice-zhi/PhotoSift/issues)，最好附上手机型号和系统版本。
+PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更多真 iPhone 和安卓手机的测试。
+
+已知限制：iPhone 一次只能传一个文件，也不支持从文件中间开始读。所以：
+- 超过 64 MB 的视频不能在导入前预览，导入到电脑后再播放就行。
+- 后台读取拍摄时间和缩略图时，要把整个文件传一遍，照片很多时会比较慢。
+
+遇到分类不对、读不到或报错的情况，欢迎提 [Issue](https://github.com/Juice-zhi/PhotoSift/issues)，最好附上手机型号和系统版本。
 
 ## License
 

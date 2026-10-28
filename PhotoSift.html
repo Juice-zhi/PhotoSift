@@ -543,6 +543,7 @@ function deviceErr(e) {
   const c = e?.code || e?.message || e;
   if (c === 'gone') return '手机连接断开了。请插好数据线、解锁手机后再试。';
   if (c === 'denied') return '手机拒绝了访问。请解锁手机，并在手机上点「信任」/「允许」。';
+  if (c === 'busy') return '手机正忙，可能有别的程序（如「照片」应用、资源管理器）在读取手机。请关掉它们后再试。';
   if (c === 'Failed to fetch') return '连不上 PhotoSift 助手，它的窗口可能被关掉了。请重新双击「启动 PhotoSift.cmd」。';
   return String(c);
 }
@@ -561,6 +562,7 @@ class DevFile {
   get thumbUrl() { return `/api/thumb?dev=${enc(this.dev)}&id=${enc(this.id)}&t=${TOKEN}`; }
   async arrayBuffer() {
     if (!this.size) return new ArrayBuffer(0);
+    await devIdle();
     const r = await fetch(this.base, { headers: { Range: `bytes=${this.off}-${this.off + this.size - 1}` } });
     if (!r.ok) throw new Error(r.status === 503 ? 'gone' : 'HTTP ' + r.status);
     return r.arrayBuffer();
@@ -568,6 +570,10 @@ class DevFile {
   async blob() { return new Blob([await this.arrayBuffer()], { type: this.type }); }
 }
 const isDev = f => f instanceof DevFile;
+// A phone serves one file at a time, so background reads (metadata, thumbnails) wait while an import runs.
+let devGate = null;
+async function devIdle() { while (devGate) await devGate.p; }
+function holdDevice() { let open; devGate = { p: new Promise(r => open = r) }; return () => { devGate = null; open(); }; }
 // Something a <video>/<img> can load: phone files stream from the helper, local files become blob: URLs.
 function srcOf(f) {
   if (isDev(f)) return { url: f.url, revoke() {} };
@@ -1653,6 +1659,7 @@ async function phoneThumb(rec) {
   finally { bmp.close?.(); }
 }
 async function makeThumb(it, upgrade = false) {
+  if (isDev(it.main.file)) await devIdle();
   if (isDev(it.main.file) && !upgrade) {
     const t = await phoneThumb(it.main).catch(() => null);
     if (t) return t;
@@ -1755,6 +1762,7 @@ function playError(it, mode, e) {
     return 'HEIC 照片解码失败' + (heicWarned ? '（解码组件需要联网加载）' : '') + '。';
   }
   if (e?.message === 'noembedded') return '没找到这张照片里内嵌的视频数据。';
+  if (e?.message === 'toobig') return '这个视频超过 64 MB。iPhone 不支持从文件中间读取，预览就得把整个视频传一遍，所以请先导入到电脑再播放。';
   return '浏览器无法播放这个视频，多半是 HEVC (H.265) 编码。\n用最新版 Chrome 一般可以直接播放；Edge 需要在 Microsoft Store 安装「HEVC 视频扩展」。分类和筛选不受影响。';
 }
 async function showViewer() {
@@ -1782,7 +1790,12 @@ async function showViewer() {
       const v = document.createElement('video');
       v.controls = true; v.autoplay = true; v.playsInline = true; v.loop = it.kind === 'live';
       v.src = src.url;
-      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('nocodec')); });
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('nocodec')); })
+        .catch(async e => {
+          // An iPhone can't jump around inside a file, so the helper won't preview big videos from it.
+          const why = isDev(blob) ? await api(`/api/file?dev=${enc(blob.dev)}&id=${enc(blob.id)}&len=1`, null, { raw: true }).then(() => null, x => x.code) : null;
+          throw why === 'toobig' ? new Error('toobig') : e;
+        });
       if (token !== V.token) return;
       st.innerHTML = '';
       st.appendChild(v);
@@ -1887,8 +1900,10 @@ async function runImport() {
     owners.push([it, r]);
   }
   let job;
+  const release = holdDevice();
   try { job = await api('/api/import', { dev: state.source.dev, dest, items }); }
   catch (e) {
+    release();
     if (e.code === 'nospace') toast(`目标磁盘空间不够：需要 ${fmtSize(e.data.need)}，只剩 ${fmtSize(e.data.free)}。`, 8000);
     else if (e.code === 'dest') toast('无法使用这个文件夹' + (e.data.detail ? '：' + e.data.detail : '。'), 8000);
     else toast('无法开始导入：' + deviceErr(e), 8000);
@@ -1910,8 +1925,10 @@ async function runImport() {
     if (s.state !== 'running') break;
   }
   importJob = null;
+  release();
   copyLocked(false);
   $('#copyPtxt').style.whiteSpace = 'pre-line';
+  if (s.failed && s.errors?.length) $('#copyPtxt').textContent += '\n失败的文件：\n' + s.errors.slice(0, 5).join('\n') + (s.errors.length > 5 ? '\n…' : '');
   // Mark what is now on the PC.
   state.imported ||= new Set();
   for (const i of s.ok || []) state.imported.add(impKey(owners[i][1]));
@@ -1924,7 +1941,7 @@ async function runImport() {
   $('#copyOpen').hidden = false;
   $('#copyOpen').onclick = () => api('/api/reveal', { path: job.dest }).catch(() => {});
   const okNew = (s.ok || []).length - s.skipped;
-  if (s.state === 'done') toast(`导入完成：${okNew} 个新文件` + (s.skipped ? `，${s.skipped} 个之前导入过、已跳过` : '') + (s.failed ? `，${s.failed} 个失败` : '') + ` → ${job.dest}`, 8000);
+  if (s.state === 'done') toast(`导入完成：${okNew} 个新文件` + (s.skipped ? `，${s.skipped} 个之前导入过、已跳过` : '') + (s.failed ? `，${s.failed} 个失败（原因见导入窗口）` : '') + ` → ${job.dest}`, 8000);
   else if (s.state === 'cancelled') toast(`已停止：导入了 ${okNew} 个文件。再导入一次会自动跳过已导入的。`, 8000);
   else toast(`导入中断：${deviceErr(s.error)} 已导入 ${okNew} 个，重新连接后再导入一次会自动跳过它们。`, 10000);
   if (s.failed && s.errors?.length) console.warn('import errors', s.errors);
