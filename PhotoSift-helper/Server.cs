@@ -1,6 +1,7 @@
 // PhotoSift helper: lets PhotoSift.html read a phone or camera directly over USB
 // (Windows Portable Devices = MTP / PTP) and import files to the PC with their capture dates.
-// The device is opened read-only. Listens on localhost only and needs the per-run token.
+// Only reads from the device: files through a read-only connection, iPhone previews through GetThumb (see PtpThumb).
+// Listens on localhost only and needs the per-run token.
 // Written for the C# 5 compiler that ships with Windows (.NET Framework 4.x).
 using System;
 using System.Collections;
@@ -45,7 +46,7 @@ namespace PhotoSift
     interface IPortableDevice
     {
         void Open([MarshalAs(UnmanagedType.LPWStr)] string id, IPortableDeviceValues clientInfo);
-        void SendCommand(uint flags, IntPtr parameters, out IntPtr results);
+        void SendCommand(uint flags, IPortableDeviceValues parameters, out IPortableDeviceValues results);
         void Content(out IPortableDeviceContent content);
         void Capabilities(out IntPtr caps);
         void Cancel();
@@ -122,8 +123,22 @@ namespace PhotoSift
         void GetIUnknownValue(ref PropKey key, out IntPtr value);
         void SetGuidValue(ref PropKey key, ref Guid value);
         void GetGuidValue(ref PropKey key, out Guid value);
+        void SetBufferValue(ref PropKey key, [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 2)] byte[] value, uint cb);
+        void GetBufferValue(ref PropKey key, out IntPtr value, out uint cb);
+        void SetIPortableDeviceValuesValue(ref PropKey key, IPortableDeviceValues value);
+        void GetIPortableDeviceValuesValue(ref PropKey key, out IPortableDeviceValues value);
+        void SetIPortableDevicePropVariantCollectionValue(ref PropKey key, IPortableDevicePropVariantCollection value);
     }
     [ComImport, Guid("0c15d503-d017-47ce-9016-7b3f978721cc")] class PortableDeviceValuesClass { }
+
+    [ComImport, Guid("89b2e422-4f1b-4316-bcef-a44afea83eb3"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPortableDevicePropVariantCollection
+    {
+        void GetCount(ref uint count);
+        void GetAt(uint index, IntPtr value);
+        void Add(IntPtr value);
+    }
+    [ComImport, Guid("08a99e2f-6d6d-4b80-af5a-baf2bcbe4cb9")] class PortableDevicePropVariantCollectionClass { }
 
     // ========================================================================
     // Device backends
@@ -175,7 +190,11 @@ namespace PhotoSift
         public const long STREAM_MAX = 64L << 20;
         const long DRAIN_MAX = 8L << 20, SKIP_CHEAP = 1L << 20;
 
+        readonly string pnpId;
+        readonly bool apple;
         readonly IPortableDevice dev;
+        IPortableDevice ptp;    // second connection, for GetThumb only (see PtpThumb)
+        bool ptpTried;
         readonly IPortableDeviceProperties props;
         readonly IPortableDeviceResources res;
         readonly IPortableDeviceContent content;
@@ -191,23 +210,32 @@ namespace PhotoSift
 
         public WpdBackend(string pnpId)
         {
+            this.pnpId = pnpId;
+            apple = pnpId.IndexOf("vid_05ac", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (apple) canSeek = false;   // don't even try
+            dev = OpenDevice(pnpId, GENERIC_READ);   // read-only: never write to the phone
+            dev.Content(out content);
+            content.Properties(out props);
+            content.Transfer(out res);
+            keys = (IPortableDeviceKeyCollection)new PortableDeviceKeyCollectionClass();
+            foreach (PropKey key in new[] { K_NAME, K_FORMAT, K_TYPE, K_SIZE, K_ORIG, K_CREATED, K_MODIFIED }) { PropKey kk = key; keys.Add(ref kk); }
+        }
+
+        const uint GENERIC_READ = 0x80000000, GENERIC_WRITE = 0x40000000;
+        static IPortableDevice OpenDevice(string pnpId, uint access)
+        {
             var info = (IPortableDeviceValues)new PortableDeviceValuesClass();
             PropKey k = new PropKey(CLIENT, 2); info.SetStringValue(ref k, "PhotoSift");
             k = new PropKey(CLIENT, 3); info.SetUnsignedIntegerValue(ref k, 1);
             k = new PropKey(CLIENT, 4); info.SetUnsignedIntegerValue(ref k, 0);
             k = new PropKey(CLIENT, 5); info.SetUnsignedIntegerValue(ref k, 0);
             k = new PropKey(CLIENT, 8); info.SetUnsignedIntegerValue(ref k, 0x20000);       // SECURITY_IMPERSONATION
-            k = new PropKey(CLIENT, 9); info.SetUnsignedIntegerValue(ref k, 0x80000000);    // GENERIC_READ only: never write to the phone
+            k = new PropKey(CLIENT, 9); info.SetUnsignedIntegerValue(ref k, access);
             object d;
             try { d = new PortableDeviceFTMClass(); } catch (COMException) { d = new PortableDeviceClass(); }
-            dev = (IPortableDevice)d;
-            if (pnpId.IndexOf("vid_05ac", StringComparison.OrdinalIgnoreCase) >= 0) canSeek = false;   // Apple: don't even try
+            var dev = (IPortableDevice)d;
             dev.Open(pnpId, info);
-            dev.Content(out content);
-            content.Properties(out props);
-            content.Transfer(out res);
-            keys = (IPortableDeviceKeyCollection)new PortableDeviceKeyCollectionClass();
-            foreach (PropKey key in new[] { K_NAME, K_FORMAT, K_TYPE, K_SIZE, K_ORIG, K_CREATED, K_MODIFIED }) { PropKey kk = key; keys.Add(ref kk); }
+            return dev;
         }
 
         public List<string> Children(string id)
@@ -404,7 +432,7 @@ namespace PhotoSift
             uint opt = 0;
             ComIStream s;
             PropKey key = R_THUMB;
-            try { res.GetStream(id, ref key, 0, ref opt, out s); } catch { return null; }
+            try { res.GetStream(id, ref key, 0, ref opt, out s); } catch { return apple ? PtpThumb(id) : null; }
             try
             {
                 var ms = new MemoryStream();
@@ -421,11 +449,97 @@ namespace PhotoSift
             finally { Marshal.ReleaseComObject(s); }
         }
 
+        // An iPhone has no WPD thumbnail resource, but answers the PTP GetThumb operation in a few ms with a
+        // ~160 px JPEG, videos included. Windows passes raw PTP operations only on a read-write connection, so a
+        // second one is opened for this; GetThumb is the only operation ever sent on it.
+        byte[] PtpThumb(string id)
+        {
+            uint handle;
+            if (id.Length < 2 || id[0] != 'o' || !uint.TryParse(id.Substring(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out handle)) return null;
+            if (!ptpTried)
+            {
+                ptpTried = true;
+                try { ptp = OpenDevice(pnpId, GENERIC_READ | GENERIC_WRITE); } catch (Exception) { ptp = null; }
+            }
+            if (ptp == null) return null;
+            End();   // one transfer at a time: finish the open one (to its end) first
+            try { return PtpRead(ptp, 0x100A, handle); }
+            catch (Exception e) { if (Server.IsGone(e)) throw; return null; }
+        }
+
+        const string CMD = "f0422a9c-5dc8-4440-b5bd-5df28835658a", MTP_EXT = "4d545058-1a2e-4106-a357-771e0819fc56";
+        static IPortableDeviceValues MtpCommand(uint id)
+        {
+            var v = (IPortableDeviceValues)new PortableDeviceValuesClass();
+            PropKey k = new PropKey(CMD, 1001); Guid g = new Guid(MTP_EXT); v.SetGuidValue(ref k, ref g);
+            k = new PropKey(CMD, 1002); v.SetUnsignedIntegerValue(ref k, id);
+            return v;
+        }
+        static IPortableDeviceValues Send(IPortableDevice d, IPortableDeviceValues p)
+        {
+            IPortableDeviceValues r;
+            d.SendCommand(0, p, out r);
+            PropKey k = new PropKey(CMD, 1003); int hr; r.GetErrorValue(ref k, out hr);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            return r;
+        }
+        // Runs one PTP operation whose data comes from the phone and returns that data (null unless the phone
+        // answers OK). All of the data is read before the transaction ends, so no transfer is ever cut short.
+        static byte[] PtpRead(IPortableDevice d, ushort op, params uint[] args)
+        {
+            var p = MtpCommand(13);   // EXECUTE_COMMAND_WITH_DATA_TO_READ
+            PropKey k = new PropKey(MTP_EXT, 1001); p.SetUnsignedIntegerValue(ref k, op);
+            var list = (IPortableDevicePropVariantCollection)new PortableDevicePropVariantCollectionClass();
+            IntPtr pv = Marshal.AllocCoTaskMem(24);
+            try
+            {
+                foreach (uint a in args)
+                {
+                    for (int i = 0; i < 24; i += 8) Marshal.WriteInt64(pv, i, 0);
+                    Marshal.WriteInt16(pv, 19);   // VT_UI4
+                    Marshal.WriteInt32(pv, 8, unchecked((int)a));
+                    list.Add(pv);
+                }
+            }
+            finally { Marshal.FreeCoTaskMem(pv); }
+            k = new PropKey(MTP_EXT, 1002); p.SetIPortableDevicePropVariantCollectionValue(ref k, list);
+            IPortableDeviceValues r = Send(d, p);
+            string ctx; k = new PropKey(MTP_EXT, 1006); r.GetStringValue(ref k, out ctx);
+            ulong total; k = new PropKey(MTP_EXT, 1007); r.GetUnsignedLargeIntegerValue(ref k, out total);
+            var data = new MemoryStream();
+            Exception failed = null;
+            try
+            {
+                while ((ulong)data.Length < total)
+                {
+                    uint want = (uint)Math.Min(total - (ulong)data.Length, 1u << 20);
+                    var q = MtpCommand(15);   // READ_DATA
+                    k = new PropKey(MTP_EXT, 1006); q.SetStringValue(ref k, ctx);
+                    k = new PropKey(MTP_EXT, 1008); q.SetUnsignedIntegerValue(ref k, want);
+                    k = new PropKey(MTP_EXT, 1012); q.SetBufferValue(ref k, new byte[want], want);
+                    IPortableDeviceValues a = Send(d, q);
+                    uint n; k = new PropKey(MTP_EXT, 1009); a.GetUnsignedIntegerValue(ref k, out n);
+                    if (n == 0) break;
+                    IntPtr buf; uint cb; k = new PropKey(MTP_EXT, 1012); a.GetBufferValue(ref k, out buf, out cb);
+                    try { var b = new byte[Math.Min(n, cb)]; Marshal.Copy(buf, b, 0, b.Length); data.Write(b, 0, b.Length); }
+                    finally { Marshal.FreeCoTaskMem(buf); }
+                }
+            }
+            catch (Exception e) { failed = e; }
+            var end = MtpCommand(17);   // END_DATA_TRANSFER
+            k = new PropKey(MTP_EXT, 1006); end.SetStringValue(ref k, ctx);
+            IPortableDeviceValues er = Send(d, end);
+            uint code; k = new PropKey(MTP_EXT, 1003); er.GetUnsignedIntegerValue(ref k, out code);
+            if (failed != null) throw failed;
+            return code == 0x2001 ? data.ToArray() : null;
+        }
+
         public void Close()
         {
             try { End(); } catch { }
             try { dev.Close(); } catch { }
             Marshal.ReleaseComObject(dev);
+            if (ptp != null) { try { ptp.Close(); } catch { } Marshal.ReleaseComObject(ptp); ptp = null; }
         }
     }
 
@@ -582,6 +696,9 @@ namespace PhotoSift
         public const string MockId = "mock";
         public static string MockDir;
         static readonly Dictionary<string, Dev> open = new Dictionary<string, Dev>();
+        // The connection the current request got from Get, so that if the request fails, only that connection is
+        // dropped: after a replug, requests still running on the old one must not close the new one.
+        [ThreadStatic] static Dev used;
 
         public static List<object> List(bool all)
         {
@@ -633,20 +750,23 @@ namespace PhotoSift
             lock (open)
             {
                 Dev d;
-                if (open.TryGetValue(id, out d)) return d;
+                if (open.TryGetValue(id, out d)) return used = d;
                 IBackend b = id == MockId && MockDir != null ? (IBackend)new FolderBackend(MockDir) : new WpdBackend(id);
                 d = new Dev(id, b);
                 open[id] = d;
-                return d;
+                return used = d;
             }
         }
-        public static void Drop(string id)
+        // The connection this thread's request got from Get (null if none); clears it.
+        public static Dev TakeUsed() { Dev d = used; used = null; return d; }
+        // Closes a connection that failed; the next Get opens a new one. A newer connection to the same phone stays open.
+        public static void Drop(Dev d)
         {
-            Dev d;
+            if (d == null) return;
             lock (open)
             {
-                if (!open.TryGetValue(id, out d)) return;
-                open.Remove(id);
+                Dev cur;
+                if (open.TryGetValue(d.Id, out cur) && cur == d) open.Remove(d.Id);
             }
             try { lock (d.Sync) d.B.Close(); } catch { }
         }
@@ -741,8 +861,8 @@ namespace PhotoSift
                         Failed++; Done++; Bytes += Math.Max(0, it.Size - got);
                         if (Errors.Count < 50) Errors.Add(it.Rel + ": " + e.Message);
                     }
-                    if (Server.IsGone(e)) { Devices.Drop(dev.Id); lock (this) Error = "gone"; break; }
-                    if (e is OutOfStepException) { Devices.Drop(dev.Id); lock (this) Error = "outofstep"; break; }
+                    if (Server.IsGone(e)) { Devices.Drop(dev); lock (this) Error = "gone"; break; }
+                    if (e is OutOfStepException) { Devices.Drop(dev); lock (this) Error = "outofstep"; break; }
                 }
                 finally
                 {
@@ -954,6 +1074,7 @@ namespace PhotoSift
             var c = (HttpListenerContext)state;
             HttpListenerRequest q = c.Request;
             HttpListenerResponse r = c.Response;
+            Devices.TakeUsed();   // left over from an earlier request on this pool thread
             try
             {
                 string path = q.Url.AbsolutePath;
@@ -1013,8 +1134,8 @@ namespace PhotoSift
             {
                 if (e is HttpListenerException || e is ObjectDisposedException) return;   // browser went away mid-response
                 string code = IsGone(e) ? "gone" : IsDenied(e) ? "denied" : IsTransient(e) ? "busy" : e is OutOfStepException ? "outofstep" : e.Message;
-                string dev = q.QueryString["dev"];
-                if ((code == "gone" || code == "outofstep") && dev != null) Devices.Drop(dev);
+                Dev used = Devices.TakeUsed();
+                if (code == "gone" || code == "outofstep") Devices.Drop(used);
                 try { Send(r, code == "gone" ? 503 : 500, Err(code)); } catch { }
             }
             finally { try { r.Close(); } catch { } }
@@ -1028,6 +1149,7 @@ namespace PhotoSift
             {
                 case 0x8007001F: case 0x80070015: case 0x8007048F: case 0x800701B1: case 0x80070079:
                 case 0x800706BA: case 0x80070006: case 0x80070037: case 0x802A0006:
+                case 0x802A0002:   // E_WPD_DEVICE_NOT_OPEN: Windows closed the connection (phone unplugged and plugged back in)
                     return true;
             }
             return false;
@@ -1067,7 +1189,20 @@ namespace PhotoSift
         // Storages (e.g. "Internal Storage") and their top-level folders, so the page can pick DCIM etc.
         static void Folders(HttpListenerRequest q, HttpListenerResponse r)
         {
-            Dev d = Devices.Get(q.QueryString["dev"]);
+            string id = q.QueryString["dev"];
+            List<object> list;
+            try { list = FolderList(Devices.Get(id)); }
+            catch (Exception e)
+            {
+                // This is where the page connects: a connection kept from before the phone was replugged is dead, so open a new one.
+                if (!IsGone(e)) throw;
+                Devices.Drop(Devices.TakeUsed());
+                list = FolderList(Devices.Get(id));
+            }
+            Send(r, 200, list);
+        }
+        static List<object> FolderList(Dev d)
+        {
             var list = new List<object>();
             foreach (string sid in d.Children(d.B.Root))
             {
@@ -1086,7 +1221,7 @@ namespace PhotoSift
                 }
                 list.Add(new Dictionary<string, object> { { "id", sid }, { "name", si.Name }, { "folders", folders }, { "files", files } });
             }
-            Send(r, 200, list);
+            return list;
         }
 
         // Streams the file list as NDJSON so the page can show progress on big libraries.
@@ -1136,7 +1271,7 @@ namespace PhotoSift
             catch (Exception e)
             {
                 if (e is HttpListenerException || e is ObjectDisposedException) throw;
-                if (IsGone(e)) Devices.Drop(d.Id);
+                if (IsGone(e)) Devices.Drop(d);
                 w.Write("{\"t\":\"err\",\"msg\":" + Json.Serialize(IsGone(e) ? "gone" : IsDenied(e) ? "denied" : e.Message) + "}\n");
             }
             w.Flush();

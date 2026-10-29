@@ -10,12 +10,12 @@
 
 ## 功能
 
-- **直接读手机**：USB 连接后点「连接手机」，几秒就能看到所有照片和视频。只读打开，不会修改或删除手机上的任何文件。
+- **直接读手机**：USB 连接后点「连接手机」，几秒就能看到所有照片和视频，视频也有预览图。只从手机读取，不会修改或删除手机上的任何文件。
 - **分出实况、视频、照片**
   - **实况**：同名的照片和短视频（如 `IMG_1234.HEIC` + `IMG_1234.MOV`）会配成一对。改过文件名的，靠 Apple 写入的实况标识也能配上。
   - **安卓动态照片**：内嵌视频的 JPG 也能认出来。
   - **视频**：显示时长，可以按时长筛选。
-- **按拍摄日期浏览**：用照片和视频里记录的拍摄时间，不是文件复制时间。可以按天或按月分组；左侧日期列表按住 Ctrl 或 Shift 可以多选几天。
+- **按拍摄日期浏览**：用照片和视频里记录的拍摄时间，不是文件复制时间。可以按天或按月分组；左侧日期列表按住 Ctrl 或 Shift 可以多选几天。每张卡片上还会显示文件的创建时间（比如从别的应用保存到手机的时间）。
 - **筛选**
   - 视频时长
   - 缺照片的实况视频
@@ -65,7 +65,9 @@
 | `PhotoSift.html` | 界面，所有分类和解析都在浏览器里本地完成 |
 | `PhotoSift-helper/Server.cs` | 本地助手，单个 C# 文件，没有第三方依赖 |
 
-- **助手**通过 Windows Portable Devices（WPD）以**只读**方式访问手机。它只监听本机的 `localhost`，每次启动生成一个随机令牌，别的网页访问不了它。
+- **助手**通过 Windows Portable Devices（WPD）访问手机，**只读取、不写入**。它只监听本机的 `localhost`，每次启动生成一个随机令牌，别的网页访问不了它。
+  - 读取文件用的是只读连接。
+  - iPhone 的预览图要用 PTP 的 GetThumb 命令向手机要，而 Windows 只允许在可写的连接上发这类命令。所以连接 iPhone 时，助手会另开一个连接，但这个连接上只发送 GetThumb 这一个读取命令。
 - **界面**直接解析 HEIC、JPG、MOV、MP4 里的元数据（EXIF、QuickTime、Apple 实况标识），用来分类和取拍摄时间。
 - **照片和视频不会上传到任何地方。** 唯一的联网请求是：浏览器不能直接显示 HEIC 时，会从 jsDelivr 加载开源解码库 [heic-to](https://www.npmjs.com/package/heic-to)。这个请求只下载解码代码，不会上传任何内容。
 
@@ -90,7 +92,7 @@
 PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更多真 iPhone 和安卓手机的测试。
 
 已知限制：iPhone 一次只能传一个文件，也不支持从文件中间开始读。所以：
-- 超过 64 MB 的视频不能在导入前预览，导入到电脑后再播放就行。
+- 超过 64 MB 的视频在导入前只有手机提供的小预览图（约 160 像素），不能播放。导入到电脑后再播放就行。
 - 后台读取拍摄时间和缩略图时，要把整个文件传一遍，照片很多时会比较慢。
 
 遇到分类不对、读不到或报错的情况，欢迎提 [Issue](https://github.com/Juice-zhi/PhotoSift/issues)，最好附上手机型号和系统版本。
@@ -112,7 +114,7 @@ PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更�
 To use it:
 1. Download and extract the ZIP.
 2. Connect and unlock the phone (tap **Trust** on iPhone).
-3. Double-click `启动 PhotoSift.cmd` ("Start PhotoSift"). On first run it compiles a small helper with the C# compiler built into Windows. The helper reads the phone read-only through Windows Portable Devices and serves the UI on `localhost` only.
+3. Double-click `启动 PhotoSift.cmd` ("Start PhotoSift"). On first run it compiles a small helper with the C# compiler built into Windows. The helper only reads from the phone (it never writes to it) through Windows Portable Devices, and serves the UI on `localhost` only.
 4. Click **连接手机** ("Connect phone").
 
 Files never leave your computer. The only network request is loading the open-source HEIC decoder from jsDelivr when the browser can't display HEIC by itself. Requirements: Windows 10/11 and a recent Chrome or Edge. MIT licensed.
