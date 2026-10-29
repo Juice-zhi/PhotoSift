@@ -1,3 +1,4 @@
-# Built on first run by 启动 PhotoSift.cmd
+# Built by 启动 PhotoSift.cmd (PhotoSift.build records which Server.cs the exe came from)
 PhotoSift-helper/*.exe
 PhotoSift-helper/*.pdb
+PhotoSift-helper/*.build

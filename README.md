@@ -48,12 +48,14 @@
 2. **设置 iPhone（推荐）**：打开 **设置 → 照片 → 传输到 Mac 或 PC**，选「**保留原片**」。这样不用转格式，读取更快，实况的配对信息也更完整。
 3. **连接手机**：用数据线连上电脑，然后**解锁手机**。iPhone 第一次连接会问要不要信任这台电脑，点「信任」；安卓手机把 USB 用途改成「传输文件」。
 4. **启动**：双击 **`启动 PhotoSift.cmd`**。
-   - 第一次运行时，会用 Windows 自带的 C# 编译器生成 `PhotoSift.exe`，几秒钟就好。
+   - 第一次运行时（以及更新到新版本后），会用 Windows 自带的 C# 编译器生成 `PhotoSift.exe`，几秒钟就好。
    - 之后会出现一个小黑窗口，这是助手，用的时候别关。浏览器会自动打开 PhotoSift。
 5. **读取**：点「**连接手机**」。
 6. **导入**：勾选想要的，点「**导入到电脑…**」，再选保存位置。
 
 > **Windows 提示「已保护你的电脑」？** 点「更多信息 → 仍要运行」。也可以在解压之前，右键 ZIP → 属性 → 勾选「解除锁定」。
+>
+> **更新到新版本：** 下载新的 ZIP 解压覆盖原来的文件夹（或者 `git pull`），再双击启动，助手会自动重新编译。
 >
 > **找不到手机？** 先看「此电脑」里能不能看到手机，比如 Apple iPhone → Internal Storage。能看到，PhotoSift 就能读。看不到的话，可以安装 Microsoft Store 里的 Apple Devices 应用（或者 iTunes）来获得 iPhone 驱动，然后重新插拔手机。
 
@@ -61,7 +63,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `启动 PhotoSift.cmd` | 第一次运行时编译助手，然后启动它 |
+| `启动 PhotoSift.cmd` | 需要时编译助手（第一次运行、更新之后），然后启动它 |
 | `PhotoSift.html` | 界面，所有分类和解析都在浏览器里本地完成 |
 | `PhotoSift-helper/Server.cs` | 本地助手，单个 C# 文件，没有第三方依赖 |
 
@@ -73,7 +75,7 @@
 
 ## 从源码构建
 
-`启动 PhotoSift.cmd` 实际执行的就是下面这条命令。改了 `Server.cs` 之后，删掉 `PhotoSift-helper\PhotoSift.exe`，再双击启动，就会重新编译。
+`启动 PhotoSift.cmd` 实际执行的就是下面这条命令。它会记下编译时 `Server.cs` 的大小和修改时间（存在 `PhotoSift-helper\PhotoSift.build`），`Server.cs` 一变（更新了版本或者改了代码），下次双击启动就会自动重新编译。
 
 ```bat
 %WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /codepage:65001 /optimize /target:exe /out:PhotoSift.exe /r:System.Web.Extensions.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll Server.cs
@@ -114,7 +116,7 @@ PhotoSift 已经在模拟手机和真实 WPD 设备上测试过，还需要更�
 To use it:
 1. Download and extract the ZIP.
 2. Connect and unlock the phone (tap **Trust** on iPhone).
-3. Double-click `启动 PhotoSift.cmd` ("Start PhotoSift"). On first run it compiles a small helper with the C# compiler built into Windows. The helper only reads from the phone (it never writes to it) through Windows Portable Devices, and serves the UI on `localhost` only.
+3. Double-click `启动 PhotoSift.cmd` ("Start PhotoSift"). On first run (and after an update) it compiles a small helper with the C# compiler built into Windows. The helper only reads from the phone (it never writes to it) through Windows Portable Devices, and serves the UI on `localhost` only.
 4. Click **连接手机** ("Connect phone").
 
 Files never leave your computer. The only network request is loading the open-source HEIC decoder from jsDelivr when the browser can't display HEIC by itself. Requirements: Windows 10/11 and a recent Chrome or Edge. MIT licensed.
