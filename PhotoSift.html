@@ -302,6 +302,8 @@ input[type=range]{width:90px;accent-color:var(--accent)}
         <option value="embedded">只看内嵌视频的实况（安卓）</option>
         <option value="screen">只看截屏和录屏</option>
         <option value="noscreen">隐藏截屏和录屏</option>
+        <option value="mine">只看由我拍摄的</option>
+        <option value="notmine">只看不是由我拍摄的（保存、下载、截屏等）</option>
         <option value="nodate">没有拍摄时间的（用的是文件时间）</option>
         <option value="new" data-dev hidden>只看还没导入电脑的</option>
         <option value="imported" data-dev hidden>只看已经导入过的</option>
@@ -1035,6 +1037,17 @@ function videoDate(r) {
   if (m.mvhdUtc) return { ts: naiveFromUtc(m.mvhdUtc), src: '视频创建时间' };
   return null;
 }
+// "由我拍摄": the phone's Photos app knows which pictures its own camera took, but keeps that in its library and
+// never sends it. Approximated from the file: a camera file has a camera-style name (IMG_1234, IMG_20240101_…,
+// PXL_…, DSC…) and, once read, the camera's make and model. Pictures saved from other apps or downloaded usually
+// have neither; screenshots and screen recordings aren't camera shots.
+const CAMERA_NAME = /^(?:IMG_E?\d|VID_?\d|PXL_\d|MVIMG_\d|PANO_\d|DSC[FN]?_?\d|_DSC\d|DJI_\d|GOPR\d|G[HX]\d{6}|MVI_\d|\d{8}_\d{6})/i;
+function mineWhy(it) {
+  if (it.sub) return '否 · ' + (it.sub === 'shot' ? '截屏' : '录屏');
+  if (!CAMERA_NAME.test(it.name)) return '否 · 文件名不像相机拍的，多为从其他应用保存、下载或别人发来的';
+  if (it.device) return `是 · ${it.device} 拍摄`;
+  return it.mine ? '大概是 · 文件名像相机拍的，拍摄设备还没读到' : '否 · 文件里没有拍摄设备信息，多为保存或下载的图片';
+}
 function makeItem(kind, image, video, reason, extra = {}) {
   const main = image || video;
   const im = image?.meta || {}, vm = video?.meta || {};
@@ -1059,6 +1072,8 @@ function makeItem(kind, image, video, reason, extra = {}) {
   it.monthKey = it.dayKey.slice(0, 7);
   if (kind === 'photo' && ((image.ext === 'png' && !im.make) || /^(screenshot|截屏|屏幕截图|snipaste)/i.test(image.base))) it.sub = 'shot';
   if (kind === 'video' && /^(rpreplay|screenrecord|screen_record|screen-record|录屏|屏幕录制)/i.test(video.base)) it.sub = 'rec';
+  const read = [image, video].some(r => r && !r.meta.error && (r.parsed || !isDev(r.file)));   // file metadata is in
+  it.mine = !it.sub && CAMERA_NAME.test(it.name) && (!read || !!it.device);
   it.search = [image?.name, video?.name, it.dir].filter(Boolean).join(' ').toLowerCase();
   return it;
 }
@@ -1359,6 +1374,8 @@ function matches(it, { ignoreDays = false, ignoreKind = false } = {}) {
     case 'embedded': if (!it.embedded) return false; break;
     case 'screen': if (!it.sub) return false; break;
     case 'noscreen': if (it.sub) return false; break;
+    case 'mine': if (!it.mine) return false; break;
+    case 'notmine': if (it.mine) return false; break;
     case 'nodate': if (!it.noDate) return false; break;
     case 'new': if (it.imported) return false; break;
     case 'imported': if (!it.imported) return false; break;
@@ -1867,6 +1884,7 @@ function renderInfo(it) {
   if (it.width) rows.push(['分辨率', `${it.width} × ${it.height}`]);
   rows.push(['大小', fmtSize(it.size) + (it.image && it.video ? `<small>照片 ${fmtSize(it.image.size)} + 视频 ${fmtSize(it.video.size)}</small>` : '')]);
   if (it.device) rows.push(['设备', esc(it.device)]);
+  rows.push(['由我拍摄', esc(mineWhy(it))]);
   for (const rec of [it.image, it.video].filter(Boolean)) rows.push([rec.media === 'image' ? '照片文件' : '视频文件', esc(fullPath(rec))]);
   if (it.contentId) rows.push(['内容标识', `<small style="color:#999">${esc(it.contentId)}</small>`]);
   const sel = state.selected.has(it.id);
@@ -2039,12 +2057,12 @@ async function runCopy() {
   toast(stopped ? `已停止：复制了 ${done} 个文件。` : `复制完成：${done - skipped} 个新文件` + (skipped ? `，${skipped} 个已存在被跳过` : '') + (failed ? `，${failed} 个失败` : '') + ` → ${dest.name}`, 6000);
 }
 function exportCSV(items) {
-  const rows = [['类型', '日期', '时间', '名称', '照片文件', '视频文件', '视频时长(秒)', '大小(MB)', '文件夹', '判定依据', '时间来源', '创建时间', '修改时间']];
+  const rows = [['类型', '日期', '时间', '名称', '照片文件', '视频文件', '视频时长(秒)', '大小(MB)', '文件夹', '判定依据', '时间来源', '创建时间', '修改时间', '由我拍摄']];
   const K = { live: '实况', video: '视频', photo: '照片' };
   const stamp = ts => ts ? `${dayKeyOf(ts)} ${fmtTime(ts)}` : '';
   for (const it of items) {
     const ft = fileTimes(it.main);
-    rows.push([K[it.kind] + (it.orphan ? '(缺照片)' : it.embedded ? '(内嵌)' : ''), it.dayKey, fmtTime(it.ts), it.name, it.image?.name || '', it.video?.name || '', it.duration != null ? it.duration.toFixed(1) : '', (it.size / 1048576).toFixed(2), it.dir, it.reason, it.dateSrc, stamp(ft.created), stamp(ft.modified)]);
+    rows.push([K[it.kind] + (it.orphan ? '(缺照片)' : it.embedded ? '(内嵌)' : ''), it.dayKey, fmtTime(it.ts), it.name, it.image?.name || '', it.video?.name || '', it.duration != null ? it.duration.toFixed(1) : '', (it.size / 1048576).toFixed(2), it.dir, it.reason, it.dateSrc, stamp(ft.created), stamp(ft.modified), mineWhy(it)]);
   }
   const csv = '﻿' + rows.map(r => r.map(c => /[",\r\n]/.test(String(c)) ? `"${String(c).replace(/"/g, '""')}"` : c).join(',')).join('\r\n');
   const a = document.createElement('a');
